@@ -4,15 +4,18 @@ import (
 	"embed"
 	"encoding/csv"
 	"fmt"
+	"html/template"
 	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/sjzar/chatlog/internal/errors"
+	"github.com/sjzar/chatlog/internal/model"
 	"github.com/sjzar/chatlog/pkg/util"
 	"github.com/sjzar/chatlog/pkg/util/dat2img"
 	"github.com/sjzar/chatlog/pkg/util/silk"
@@ -117,6 +120,106 @@ func (s *Service) handleChatlog(c *gin.Context) {
 		q.Offset = 0
 	}
 
+	// 当未提供 talker 时，返回所有会话内消息并按 chatroom(talker) 分组
+	if q.Talker == "" {
+		// 获取所有会话（不分页）
+		sessionsResp, err := s.db.GetSessions("", 0, 0)
+		if err != nil {
+			errors.Err(c, err)
+			return
+		}
+
+		// 结果分组结构
+		type grouped struct {
+			Talker     string            `json:"talker"`
+			TalkerName string            `json:"talkerName,omitempty"`
+			Messages   []*model.Message  `json:"messages"`
+		}
+
+		groups := make([]*grouped, 0)
+
+		// 遍历每个会话获取消息
+		for _, sess := range sessionsResp.Items {
+			msgs, err := s.db.GetMessages(start, end, sess.UserName, q.Sender, q.Keyword, 0, 0)
+			if err != nil || len(msgs) == 0 {
+				continue
+			}
+			g := &grouped{Talker: sess.UserName, TalkerName: sess.NickName, Messages: msgs}
+			groups = append(groups, g)
+		}
+
+		switch strings.ToLower(q.Format) {
+		case "html":
+			// HTML 输出：分组折叠
+			c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+			c.Writer.WriteString("<html><head><meta charset=\"utf-8\"><title>Chatlog</title><style>body{font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.4;}details{margin:8px 0;padding:4px 8px;border:1px solid #ddd;border-radius:4px; background:#fafafa;}summary{cursor:pointer;font-weight:600;} .msg{margin:4px 0;padding:4px 6px;border-left:3px solid #3498db;background:#fff;} .meta{color:#666;font-size:12px;} pre{white-space:pre-wrap;word-break:break-word;margin:2px 0;} .talker{color:#2c3e50;} .sender{color:#8e44ad;} .time{color:#16a085;} .content{margin-left:4px;} </style></head><body>")
+			c.Writer.WriteString(fmt.Sprintf("<h2>All Messages %s ~ %s</h2>", start.Format("2006-01-02 15:04:05"), end.Format("2006-01-02 15:04:05")))
+			for _, g := range groups {
+				title := g.Talker
+				if g.TalkerName != "" {
+					title = fmt.Sprintf("%s (%s)", g.TalkerName, g.Talker)
+				}
+				c.Writer.WriteString("<details open><summary>" + template.HTMLEscapeString(title) + fmt.Sprintf(" - %d 条消息</summary>", len(g.Messages)))
+				for _, m := range g.Messages {
+					m.SetContent("host", c.Request.Host)
+					c.Writer.WriteString("<div class=\"msg\">")
+					c.Writer.WriteString("<div class=\"meta\"><span class=\"sender\">")
+					c.Writer.WriteString(template.HTMLEscapeString(m.SenderName))
+					if m.SenderName != "" { c.Writer.WriteString("(") }
+					c.Writer.WriteString(template.HTMLEscapeString(m.Sender))
+					if m.SenderName != "" { c.Writer.WriteString(")") }
+					c.Writer.WriteString("</span> <span class=\"time\">")
+					c.Writer.WriteString(m.Time.Format("2006-01-02 15:04:05"))
+					c.Writer.WriteString("</span></div>")
+					c.Writer.WriteString("<pre class=\"content\">")
+					c.Writer.WriteString(renderMarkdownImages(m.PlainTextContent()))
+					c.Writer.WriteString("</pre></div>")
+				}
+				c.Writer.WriteString("</details>")
+			}
+			c.Writer.WriteString("</body></html>")
+		case "json":
+			c.JSON(http.StatusOK, groups)
+		case "csv":
+			c.Writer.Header().Set("Content-Type", "text/csv; charset=utf-8")
+			c.Writer.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=all_%s_%s.csv", start.Format("2006-01-02"), end.Format("2006-01-02")))
+			c.Writer.Header().Set("Cache-Control", "no-cache")
+			c.Writer.Header().Set("Connection", "keep-alive")
+			c.Writer.Flush()
+			csvWriter := csv.NewWriter(c.Writer)
+			csvWriter.Write([]string{"Talker", "TalkerName", "Time", "SenderName", "Sender", "Content"})
+			for _, g := range groups {
+				for _, m := range g.Messages {
+					row := m.CSV(c.Request.Host)
+					// 原 CSV: Time, SenderName, Sender, TalkerName, Talker, Content
+					csvWriter.Write([]string{m.Talker, m.TalkerName, row[0], row[1], row[2], row[5]})
+				}
+			}
+			csvWriter.Flush()
+		default:
+			c.Writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			c.Writer.Header().Set("Cache-Control", "no-cache")
+			c.Writer.Header().Set("Connection", "keep-alive")
+			c.Writer.Flush()
+			for _, g := range groups {
+				c.Writer.WriteString("====================\n")
+				if g.TalkerName != "" {
+					c.Writer.WriteString(fmt.Sprintf("%s (%s)\n", g.TalkerName, g.Talker))
+				} else {
+					c.Writer.WriteString(fmt.Sprintf("%s\n", g.Talker))
+				}
+				c.Writer.WriteString("--------------------\n")
+				for _, m := range g.Messages {
+					c.Writer.WriteString(m.PlainText(true, util.PerfectTimeFormat(start, end), c.Request.Host))
+					c.Writer.WriteString("\n")
+				}
+				c.Writer.Flush()
+			}
+		}
+		return
+	}
+
+	// 正常：指定 talker
 	messages, err := s.db.GetMessages(start, end, q.Talker, q.Sender, q.Keyword, q.Limit, q.Offset)
 	if err != nil {
 		errors.Err(c, err)
@@ -124,7 +227,27 @@ func (s *Service) handleChatlog(c *gin.Context) {
 	}
 
 	switch strings.ToLower(q.Format) {
-	case "csv":
+case "html":
+	c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+	c.Writer.WriteString("<html><head><meta charset=\"utf-8\"><title>Chatlog</title><style>body{font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.4;} .msg{margin:8px 0;padding:6px 8px;border-left:3px solid #3498db;background:#fafafa;} .meta{color:#666;font-size:12px;margin-bottom:2px;} pre{white-space:pre-wrap;word-break:break-word;margin:0;} .sender{color:#8e44ad;} .time{color:#16a085;margin-left:6px;}</style></head><body>")
+	c.Writer.WriteString(fmt.Sprintf("<h2>Messages %s ~ %s (%s)</h2>", start.Format("2006-01-02 15:04:05"), end.Format("2006-01-02 15:04:05"), template.HTMLEscapeString(q.Talker)))
+	for _, m := range messages {
+		m.SetContent("host", c.Request.Host)
+		c.Writer.WriteString("<div class=\"msg\">")
+		c.Writer.WriteString("<div class=\"meta\"><span class=\"sender\">")
+		c.Writer.WriteString(template.HTMLEscapeString(m.SenderName))
+		if m.SenderName != "" { c.Writer.WriteString("(") }
+		c.Writer.WriteString(template.HTMLEscapeString(m.Sender))
+		if m.SenderName != "" { c.Writer.WriteString(")") }
+		c.Writer.WriteString("</span><span class=\"time\">")
+		c.Writer.WriteString(m.Time.Format("2006-01-02 15:04:05"))
+		c.Writer.WriteString("</span></div>")
+		c.Writer.WriteString("<pre>")
+		c.Writer.WriteString(renderMarkdownImages(m.PlainTextContent()))
+		c.Writer.WriteString("</pre></div>")
+	}
+	c.Writer.WriteString("</body></html>")
+case "csv":
 		c.Writer.Header().Set("Content-Type", "text/csv; charset=utf-8")
 		c.Writer.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s_%s_%s.csv", q.Talker, start.Format("2006-01-02"), end.Format("2006-01-02")))
 		c.Writer.Header().Set("Cache-Control", "no-cache")
@@ -138,15 +261,12 @@ func (s *Service) handleChatlog(c *gin.Context) {
 		}
 		csvWriter.Flush()
 	case "json":
-		// json
 		c.JSON(http.StatusOK, messages)
 	default:
-		// plain text
 		c.Writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		c.Writer.Header().Set("Cache-Control", "no-cache")
 		c.Writer.Header().Set("Connection", "keep-alive")
 		c.Writer.Flush()
-
 		for _, m := range messages {
 			c.Writer.WriteString(m.PlainText(strings.Contains(q.Talker, ","), util.PerfectTimeFormat(start, end), c.Request.Host))
 			c.Writer.WriteString("\n")
@@ -420,4 +540,29 @@ func (s *Service) HandleVoice(c *gin.Context, data []byte) {
 		return
 	}
 	c.Data(http.StatusOK, "audio/mp3", out)
+}
+
+// Markdown 图片语法转换为 <img>，其余文本保持转义
+var mdImgPattern = regexp.MustCompile(`!\[([^\]]*)\]\(([^)]+)\)`)
+
+func renderMarkdownImages(src string) string {
+	if src == "" {
+		return ""
+	}
+	matches := mdImgPattern.FindAllStringSubmatchIndex(src, -1)
+	if len(matches) == 0 {
+		return template.HTMLEscapeString(src)
+	}
+	var b strings.Builder
+	last := 0
+	for _, m := range matches {
+		// m: full, alt, url indices
+		b.WriteString(template.HTMLEscapeString(src[last:m[0]]))
+		alt := template.HTMLEscapeString(src[m[2]:m[3]])
+		url := template.HTMLEscapeString(src[m[4]:m[5]])
+		b.WriteString(`<img src="` + url + `" alt="` + alt + `" loading="lazy"/>`)
+		last = m[1]
+	}
+	b.WriteString(template.HTMLEscapeString(src[last:]))
+	return b.String()
 }
