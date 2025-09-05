@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"strconv"
 
 	"github.com/sjzar/chatlog/pkg/util"
 )
@@ -366,6 +367,16 @@ func (m *Message) PlainTextContent() string {
 		return fmt.Sprintf("![图片](http://%s/image/%s)", m.Contents["host"], strings.Join(keylist, ","))
 	case MessageTypeVoice:
 		if voice, ok := m.Contents["voice"]; ok {
+			// 可选时长字段（可能来源于不同表：voicelength/voiceduration/length 秒）
+			var durStr string
+			if d, ok2 := m.Contents["voicelength"]; ok2 { durStr = fmt.Sprint(d) }
+			if d, ok2 := m.Contents["voiceduration"]; ok2 { durStr = fmt.Sprint(d) }
+			if d, ok2 := m.Contents["length"]; ok2 && durStr=="" { durStr = fmt.Sprint(d) }
+			if durStr != "" {
+				// 规范成整数秒显示
+				if strings.Contains(durStr, ".") { if f,err:=strconv.ParseFloat(durStr,64); err==nil { durStr = fmt.Sprint(int(f+0.5)) } }
+				return fmt.Sprintf("[语音(%ss)](http://%s/voice/%s)", durStr, m.Contents["host"], voice)
+			}
 			return fmt.Sprintf("[语音](http://%s/voice/%s)", m.Contents["host"], voice)
 		}
 		return "[语音]"

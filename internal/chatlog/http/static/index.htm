@@ -350,6 +350,7 @@
                         <div class="tab" data-tab="chatroom">群聊</div>
                         <div class="tab" data-tab="contact">联系人</div>
                         <div class="tab" data-tab="chatlog">聊天记录</div>
+                        <div class="tab" data-tab="diary">日记</div>
                     </div>
 
                     <!-- 会话查询表单 -->
@@ -371,6 +372,33 @@
                                 <option value="">默认</option>
                                 <option value="json">JSON</option>
                                 <option value="text">纯文本</option>
+                                <option value="html">HTML</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- 日记查询表单 -->
+                    <div class="tab-content" id="diary-tab">
+                        <div class="api-description">
+                            <p>
+                                查询最近24小时内“我”发送的消息按会话分组。<span
+                                    class="badge"
+                                    >GET /api/v1/diary</span
+                                >
+                            </p>
+                        </div>
+                        <div class="form-group">
+                            <label for="diary-format"
+                                >输出格式：<span class="optional-param"
+                                    >可选</span
+                                ></label
+                            >
+                            <select id="diary-format">
+                                <option value="">默认</option>
+                                <option value="json">JSON</option>
+                                <option value="text">纯文本</option>
+                                <option value="html">HTML</option>
+                                <option value="csv">CSV</option>
                             </select>
                         </div>
                     </div>
@@ -754,6 +782,15 @@
 
                                 if (sessionFormat)
                                     params.append("format", sessionFormat);
+                                break;
+                            case "diary":
+                                url += "diary";
+                                const diaryFormat =
+                                    document.getElementById(
+                                        "diary-format"
+                                    ).value;
+                                if (diaryFormat)
+                                    params.append("format", diaryFormat);
                                 break;
                         }
 
