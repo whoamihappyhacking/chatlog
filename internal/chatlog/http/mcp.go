@@ -13,6 +13,7 @@ import (
 
 	"github.com/sjzar/chatlog/internal/chatlog/conf"
 	"github.com/sjzar/chatlog/internal/errors"
+	"github.com/sjzar/chatlog/internal/model"
 	"github.com/sjzar/chatlog/pkg/util"
 	"github.com/sjzar/chatlog/pkg/version"
 )
@@ -24,6 +25,8 @@ func (s *Service) initMCPServer() {
 	s.mcpServer.AddTool(RecentChatTool, s.handleMCPRecentChat)
 	s.mcpServer.AddTool(ChatLogTool, s.handleMCPChatLog)
 	s.mcpServer.AddTool(CurrentTimeTool, s.handleMCPCurrentTime)
+	// 日记（最近24h我说过话的会话全量消息）
+	s.mcpServer.AddTool(DiaryTool, s.handleMCPDiary)
 	s.mcpSSEServer = server.NewSSEServer(s.mcpServer)
 	s.mcpStreamableServer = server.NewStreamableHTTPServer(s.mcpServer)
 }
@@ -152,6 +155,26 @@ var CurrentTimeTool = mcp.NewTool(
 - 需要执行依赖当前时间的计算（如"上个月5号我们有开会吗"）
 返回示例：2025-04-18T21:29:00+08:00
 注意：此工具不需要任何输入参数，直接调用即可获取当前时间。`),
+)
+
+// DiaryTool: 最近24小时内“我”参与（至少有一条我发送的消息）的所有会话的全部消息
+var DiaryTool = mcp.NewTool(
+	"query_diary",
+	mcp.WithDescription(`查询最近24小时内用户参与过（至少有一条由“我”发送）的所有会话的全部消息，并按会话分组返回。适用于：
+1. 让助手总结我一天聊了什么
+2. 统计我今天在不同群/联系人中的发言
+3. 回顾我参与过的讨论上下文
+
+无任何参数。返回格式：
+若存在会话：
+[会话显示名(UserName)] - N条
+2025-04-18 09:30:05 我 内容
+2025-04-18 09:30:15 张三 内容
+...
+-----------------------------
+若无结果：输出"最近24小时没有我参与的会话"。
+
+注意：此工具返回的是完整原始消息内容（已做必要的占位符文本化），不做额外摘要。若需要摘要，请先调用本工具获取原始数据后再进行总结。`),
 )
 
 type ContactRequest struct {
@@ -325,4 +348,55 @@ func (s *Service) handleMCPCurrentTime(ctx context.Context, request mcp.CallTool
 			},
 		},
 	}, nil
+}
+
+// handleMCPDiary 实现 DiaryTool 逻辑
+func (s *Service) handleMCPDiary(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	end := time.Now()
+	start := end.Add(-24 * time.Hour)
+
+	sessionsResp, err := s.db.GetSessions("", 0, 0)
+	if err != nil {
+		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: "获取会话失败: " + err.Error()}}}, nil
+	}
+
+	type grouped struct {
+		Talker     string
+		TalkerName string
+		Messages   []*model.Message
+	}
+	groups := make([]*grouped, 0)
+
+	for _, sess := range sessionsResp.Items {
+		msgs, err := s.db.GetMessages(start, end, sess.UserName, "", "", 0, 0)
+		if err != nil || len(msgs) == 0 { continue }
+		hasSelf := false
+		for _, m := range msgs { if m.IsSelf { hasSelf = true; break } }
+		if !hasSelf { continue }
+		groups = append(groups, &grouped{Talker: sess.UserName, TalkerName: sess.NickName, Messages: msgs})
+	}
+
+	buf := &bytes.Buffer{}
+	if len(groups) == 0 {
+		buf.WriteString("最近24小时没有我参与的会话")
+	} else {
+		for _, g := range groups {
+			header := g.Talker
+			if g.TalkerName != "" { header = fmt.Sprintf("%s(%s)", g.TalkerName, g.Talker) }
+			buf.WriteString(fmt.Sprintf("[%s] - %d条\n", header, len(g.Messages)))
+			for _, m := range g.Messages {
+				sender := m.Sender
+				if m.IsSelf { sender = "我" }
+				if m.SenderName != "" { sender = fmt.Sprintf("%s(%s)", m.SenderName, sender) }
+				buf.WriteString(m.Time.Format("2006-01-02 15:04:05"))
+				buf.WriteString(" ")
+				buf.WriteString(sender)
+				buf.WriteString(" ")
+				buf.WriteString(m.PlainTextContent())
+				buf.WriteString("\n")
+			}
+			buf.WriteString("-----------------------------\n")
+		}
+	}
+	return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: buf.String()}}}, nil
 }

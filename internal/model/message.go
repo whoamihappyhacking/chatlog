@@ -3,9 +3,9 @@ package model
 import (
 	"encoding/xml"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
-	"strconv"
 
 	"github.com/sjzar/chatlog/pkg/util"
 )
@@ -193,6 +193,16 @@ func (m *Message) ParseMediaInfo(data string) error {
 			// 文件
 			m.Contents["title"] = msg.App.Title
 			m.Contents["md5"] = msg.App.MD5
+		case MessageSubTypeGIF:
+			// 分享的 GIF/表情（AppMsg type=8），尽量取 URL 作为 cdnurl 用于后续渲染
+			if msg.App.URL != "" {
+				m.Contents["cdnurl"] = msg.App.URL
+			} else if msg.Emoji.CdnURL != "" { // 兜底：有些场景仍可能走 emoji 结构
+				m.Contents["cdnurl"] = msg.Emoji.CdnURL
+			}
+			if msg.App.Title != "" { // 可能包含表情描述
+				m.Contents["title"] = msg.App.Title
+			}
 		case MessageSubTypeMergeForward, MessageSubTypeNote, MessageSubTypeChatRoomNotice:
 			// 合并转发 & 笔记
 			m.Contents["title"] = msg.App.Title
@@ -375,6 +385,15 @@ func (m *Message) PlainTextContent() string {
 			if durStr != "" {
 				// 规范成整数秒显示
 				if strings.Contains(durStr, ".") { if f,err:=strconv.ParseFloat(durStr,64); err==nil { durStr = fmt.Sprint(int(f+0.5)) } }
+				// >=60s 转换为 XmYYs 形式
+				if secInt, err := strconv.Atoi(durStr); err == nil {
+					if secInt >= 60 {
+						min := secInt / 60
+						sec := secInt % 60
+						fmtDur := fmt.Sprintf("%dm%02ds", min, sec)
+						return fmt.Sprintf("[语音(%s)](http://%s/voice/%s)", fmtDur, m.Contents["host"], voice)
+					}
+				}
 				return fmt.Sprintf("[语音(%ss)](http://%s/voice/%s)", durStr, m.Contents["host"], voice)
 			}
 			return fmt.Sprintf("[语音](http://%s/voice/%s)", m.Contents["host"], voice)
@@ -426,6 +445,11 @@ func (m *Message) PlainTextContent() string {
 		case MessageSubTypeFile:
 			return fmt.Sprintf("[文件|%s](http://%s/file/%s)", m.Contents["title"], m.Contents["host"], m.Contents["md5"])
 		case MessageSubTypeGIF:
+			if m.Contents["cdnurl"] != nil {
+				if u, ok := m.Contents["cdnurl"].(string); ok && strings.HasPrefix(u, "http") {
+					return fmt.Sprintf("![GIF表情](%s)", u)
+				}
+			}
 			return "[GIF表情]"
 		case MessageSubTypeMergeForward:
 			_recordInfo, ok := m.Contents["recordInfo"]
