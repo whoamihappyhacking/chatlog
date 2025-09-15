@@ -71,6 +71,8 @@ func (s *Service) initAPIRouter() {
 		api.GET("/chatroom", s.handleChatRooms)
 		api.GET("/session", s.handleSessions)
 		api.GET("/diary", s.handleDiary)
+		// 导出为静态HTML
+		api.GET("/export/chatlog", s.handleExportChatlogHTML)
 	}
 }
 
@@ -207,6 +209,22 @@ func (s *Service) handleChatlog(c *gin.Context) {
 				c.Writer.WriteString(m.PlainText(strings.Contains(q.Talker, ","), util.PerfectTimeFormat(start, end), c.Request.Host)+"\n")
 			}
 	}
+}
+
+// handleExportChatlogHTML 导出查询结果为静态HTML文件
+// GET /api/v1/export/chatlog?time=...&talker=...&sender=...&keyword=...&limit=...&offset=...
+// 行为与 handleChatlog?format=html 类似，但会下发附件下载头，便于保存为静态HTML。
+func (s *Service) handleExportChatlogHTML(c *gin.Context) {
+	// 复用 handleChatlog 的查询参数与渲染逻辑，只是强制设置 format=html，并附加下载头
+	q := c.Request.URL.Query()
+	q.Set("format", "html")
+	// 默认文件名：chatlog_YYYY-MM-DD_HH-mm-SS.html
+	now := time.Now().Format("2006-01-02_15-04-05")
+	filename := fmt.Sprintf("chatlog_%s.html", now)
+	c.Writer.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+	// 变更 Request 的 RawQuery 后复用现有处理函数
+	c.Request.URL.RawQuery = q.Encode()
+	s.handleChatlog(c)
 }
 
 func (s *Service) handleContacts(c *gin.Context) {

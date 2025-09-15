@@ -597,7 +597,15 @@
                         </div>
                     </div>
 
-                    <button id="test-api">执行查询</button>
+                    <div style="display: flex; gap: 10px; align-items: center">
+                        <button id="test-api">执行查询</button>
+                        <button
+                            id="export-html"
+                            title="按当前聊天记录查询参数导出为静态HTML"
+                        >
+                            导出HTML
+                        </button>
+                    </div>
 
                     <div
                         id="result-wrapper"
@@ -882,6 +890,49 @@
                         errorMessage.style.display = "block";
                         console.error("API查询出错:", error);
                     }
+                });
+
+            // 导出静态HTML（仅在“聊天记录”标签生效）
+            document
+                .getElementById("export-html")
+                .addEventListener("click", function () {
+                    const activeTab = document
+                        .querySelector(".tab.active")
+                        .getAttribute("data-tab");
+                    if (activeTab !== "chatlog") {
+                        const em = document.getElementById("error-message");
+                        em.textContent =
+                            "导出仅支持‘聊天记录’标签。请切换到‘聊天记录’并设置查询条件。";
+                        em.style.display = "block";
+                        return;
+                    }
+                    const time = document.getElementById("time").value;
+                    if (!time) {
+                        const em = document.getElementById("error-message");
+                        em.textContent = "错误: 时间范围为必填项！";
+                        em.style.display = "block";
+                        return;
+                    }
+                    const talker = document.getElementById("talker").value;
+                    const sender = document.getElementById("sender").value;
+                    const keyword = document.getElementById("keyword").value;
+                    const limit = document.getElementById("limit").value;
+                    const offset = document.getElementById("offset").value;
+                    const params = new URLSearchParams();
+                    params.append("time", time);
+                    if (talker) params.append("talker", talker);
+                    if (sender) params.append("sender", sender);
+                    if (keyword) params.append("keyword", keyword);
+                    if (limit) params.append("limit", limit);
+                    if (offset) params.append("offset", offset);
+                    const url = "/api/v1/export/chatlog?" + params.toString();
+                    // 触发下载
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = "";
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
                 });
 
             // 复制结果功能
