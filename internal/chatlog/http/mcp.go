@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,7 +26,6 @@ func (s *Service) initMCPServer() {
 	s.mcpServer.AddTool(RecentChatTool, s.handleMCPRecentChat)
 	s.mcpServer.AddTool(ChatLogTool, s.handleMCPChatLog)
 	s.mcpServer.AddTool(CurrentTimeTool, s.handleMCPCurrentTime)
-	// 日记（最近24h我说过话的会话全量消息）
 	s.mcpServer.AddTool(DiaryTool, s.handleMCPDiary)
 	s.mcpSSEServer = server.NewSSEServer(s.mcpServer)
 	s.mcpStreamableServer = server.NewStreamableHTTPServer(s.mcpServer)
@@ -157,24 +157,29 @@ var CurrentTimeTool = mcp.NewTool(
 注意：此工具不需要任何输入参数，直接调用即可获取当前时间。`),
 )
 
-// DiaryTool: 最近24小时内“我”参与（至少有一条我发送的消息）的所有会话的全部消息
 var DiaryTool = mcp.NewTool(
 	"query_diary",
-	mcp.WithDescription(`查询最近24小时内用户参与过（至少有一条由“我”发送）的所有会话的全部消息，并按会话分组返回。适用于：
+	mcp.WithDescription(`查询最近N小时内（可选：24/48/72）用户参与过（至少有一条由“我”发送）的所有会话的全部消息，并按会话分组返回。适用于：
 1. 让助手总结我一天聊了什么
 2. 统计我今天在不同群/联系人中的发言
 3. 回顾我参与过的讨论上下文
 
-无任何参数。返回格式：
+参数：
+- hours: 时间范围小时数，可选 24、48、72，默认 24
+- talker: 可选，筛选特定会话（支持多个，用","分隔，ID/备注/昵称均可）
+
+返回格式：
 若存在会话：
 [会话显示名(UserName)] - N条
 2025-04-18 09:30:05 我 内容
 2025-04-18 09:30:15 张三 内容
 ...
 -----------------------------
-若无结果：输出"最近24小时没有我参与的会话"。
+若无结果：输出"最近Nh没有我参与的会话"。
 
 注意：此工具返回的是完整原始消息内容（已做必要的占位符文本化），不做额外摘要。若需要摘要，请先调用本工具获取原始数据后再进行总结。`),
+	mcp.WithString("hours", mcp.Description("时间范围小时数，可选：24、48、72；默认为24")),
+	mcp.WithString("talker", mcp.Description("可选，会话筛选（多个用','分隔）")),
 )
 
 type ContactRequest struct {
@@ -350,12 +355,27 @@ func (s *Service) handleMCPCurrentTime(ctx context.Context, request mcp.CallTool
 	}, nil
 }
 
-// handleMCPDiary 实现 DiaryTool 逻辑
-func (s *Service) handleMCPDiary(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	end := time.Now()
-	start := end.Add(-24 * time.Hour)
+type DiaryRequest struct {
+	Hours  string `json:"hours"`
+	Talker string `json:"talker"`
+}
 
-	sessionsResp, err := s.db.GetSessions("", 0, 0)
+// handleMCPDiary 实现 DiaryTool 逻辑（支持 hours 与 talker）
+func (s *Service) handleMCPDiary(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	var req DiaryRequest
+	_ = request.BindArguments(&req) // 可选参数，忽略绑定错误
+
+	hours := 24
+	if strings.TrimSpace(req.Hours) != "" {
+		if v, err := strconv.Atoi(req.Hours); err == nil && (v == 24 || v == 48 || v == 72) {
+			hours = v
+		}
+	}
+
+	end := time.Now()
+	start := end.Add(-time.Duration(hours) * time.Hour)
+
+	sessionsResp, err := s.db.GetSessions(req.Talker, 0, 0)
 	if err != nil {
 		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: "获取会话失败: " + err.Error()}}}, nil
 	}
@@ -378,7 +398,7 @@ func (s *Service) handleMCPDiary(ctx context.Context, request mcp.CallToolReques
 
 	buf := &bytes.Buffer{}
 	if len(groups) == 0 {
-		buf.WriteString("最近24小时没有我参与的会话")
+		buf.WriteString(fmt.Sprintf("最近%dh没有我参与的会话", hours))
 	} else {
 		for _, g := range groups {
 			header := g.Talker

@@ -373,16 +373,24 @@ func (s *Service) handleSessions(c *gin.Context) {
 	}
 }
 
-// handleDiary 返回最近24小时内“我”发送的消息，按 talker 分组。
-// GET /api/v1/diary?format=(html|json|csv|text)
+// handleDiary 返回最近N(24/48/72)小时内“我”发送的消息，按 talker 分组。
+// GET /api/v1/diary?hours=(24|48|72)&format=(html|json|csv|text)
 func (s *Service) handleDiary(c *gin.Context) {
-	q := struct { Format string `form:"format"` }{}
+	q := struct {
+		Hours  int    `form:"hours"`
+		Talker string `form:"talker"`
+		Format string `form:"format"`
+	}{}
 	if err := c.BindQuery(&q); err != nil { errors.Err(c, err); return }
+	// 默认24h，仅允许 24/48/72
+	hours := q.Hours
+	if hours == 0 { hours = 24 }
+	if hours != 24 && hours != 48 && hours != 72 { hours = 24 }
 	end := time.Now()
-	start := end.Add(-24 * time.Hour)
+	start := end.Add(-time.Duration(hours) * time.Hour)
 
-	// 获取所有会话
-	sessionsResp, err := s.db.GetSessions("", 0, 0)
+	// 获取会话（可选 talker 过滤）
+	sessionsResp, err := s.db.GetSessions(q.Talker, 0, 0)
 	if err != nil { errors.Err(c, err); return }
 
 	type grouped struct {
@@ -405,8 +413,8 @@ func (s *Service) handleDiary(c *gin.Context) {
 	switch format {
 	case "html":
 		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
-		c.Writer.WriteString(`<html><head><meta charset="utf-8"><title>Diary - 24h</title><style>body{font-family:Arial,Helvetica,sans-serif;font-size:14px;}details{margin:8px 0;padding:6px 8px;border:1px solid #ddd;border-radius:6px;background:#fafafa;}summary{cursor:pointer;font-weight:600;} .msg{margin:4px 0;padding:4px 6px;border-left:3px solid #2ecc71;background:#fff;} .meta{color:#666;font-size:12px;margin-bottom:2px;} pre{white-space:pre-wrap;word-break:break-word;margin:0;} .sender{color:#27ae60;} .time{color:#16a085;margin-left:6px;} a.media{color:#2c3e50;text-decoration:none;} a.media:hover{text-decoration:underline;}</style></head><body>`)
-		c.Writer.WriteString(fmt.Sprintf("<h2>最近24小时我参与过的会话全部消息（%s ~ %s）</h2>", start.Format("2006-01-02 15:04:05"), end.Format("2006-01-02 15:04:05")))
+		c.Writer.WriteString(`<html><head><meta charset="utf-8"><title>Diary</title><style>body{font-family:Arial,Helvetica,sans-serif;font-size:14px;}details{margin:8px 0;padding:6px 8px;border:1px solid #ddd;border-radius:6px;background:#fafafa;}summary{cursor:pointer;font-weight:600;} .msg{margin:4px 0;padding:4px 6px;border-left:3px solid #2ecc71;background:#fff;} .meta{color:#666;font-size:12px;margin-bottom:2px;} pre{white-space:pre-wrap;word-break:break-word;margin:0;} .sender{color:#27ae60;} .time{color:#16a085;margin-left:6px;} a.media{color:#2c3e50;text-decoration:none;} a.media:hover{text-decoration:underline;}</style></head><body>`)
+		c.Writer.WriteString(fmt.Sprintf("<h2>最近%dh我参与过的会话全部消息（%s ~ %s）</h2>", hours, start.Format("2006-01-02 15:04:05"), end.Format("2006-01-02 15:04:05")))
 		for _, g := range groups {
 			title := g.Talker
 			if g.TalkerName != "" { title = fmt.Sprintf("%s (%s)", g.TalkerName, g.Talker) }
