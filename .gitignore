@@ -32,3 +32,6 @@ dist/
 
 # Nightly python remake
 tools/
+
+# build files
+bin/
