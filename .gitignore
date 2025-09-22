@@ -29,3 +29,6 @@ go.work.sum
 
 chatlog.exe# Added by goreleaser init:
 dist/
+
+# Nightly python remake
+tools/

@@ -354,6 +354,11 @@ func (m *Message) PlainText(showChatRoom bool, timeFormat string, host string) s
 }
 
 func (m *Message) PlainTextContent() string {
+	// 安全获取 host 字符串，避免 fmt 中出现 %!s()，并提供兜底
+	host := fmt.Sprint(m.Contents["host"])
+	if host == "<nil>" || host == "" {
+		host = "127.0.0.1:5030"
+	}
 	switch m.Type {
 	case MessageTypeText:
 		return m.Content
@@ -374,7 +379,7 @@ func (m *Message) PlainTextContent() string {
 				keylist = append(keylist, thumbpath)
 			}
 		}
-		return fmt.Sprintf("![图片](http://%s/image/%s)", m.Contents["host"], strings.Join(keylist, ","))
+		return fmt.Sprintf("![图片](http://%s/image/%s)", host, strings.Join(keylist, ","))
 	case MessageTypeVoice:
 		if voice, ok := m.Contents["voice"]; ok {
 			// 可选时长字段（可能来源于不同表：voicelength/voiceduration/length 秒）
@@ -391,12 +396,12 @@ func (m *Message) PlainTextContent() string {
 						min := secInt / 60
 						sec := secInt % 60
 						fmtDur := fmt.Sprintf("%dm%02ds", min, sec)
-						return fmt.Sprintf("[语音(%s)](http://%s/voice/%s)", fmtDur, m.Contents["host"], voice)
+						return fmt.Sprintf("[语音(%s)](http://%s/voice/%s)", fmtDur, host, voice)
 					}
 				}
-				return fmt.Sprintf("[语音(%ss)](http://%s/voice/%s)", durStr, m.Contents["host"], voice)
+				return fmt.Sprintf("[语音(%ss)](http://%s/voice/%s)", durStr, host, voice)
 			}
-			return fmt.Sprintf("[语音](http://%s/voice/%s)", m.Contents["host"], voice)
+			return fmt.Sprintf("[语音](http://%s/voice/%s)", host, voice)
 		}
 		return "[语音]"
 	case MessageTypeCard:
@@ -418,7 +423,7 @@ func (m *Message) PlainTextContent() string {
 				keylist = append(keylist, path)
 			}
 		}
-		return fmt.Sprintf("![视频](http://%s/video/%s)", m.Contents["host"], strings.Join(keylist, ","))
+	return fmt.Sprintf("![视频](http://%s/video/%s)", host, strings.Join(keylist, ","))
 	case MessageTypeAnimation:
 		if m.Contents["cdnurl"] != nil {
 			if cdnURL, ok := m.Contents["cdnurl"].(string); ok {
@@ -443,7 +448,7 @@ func (m *Message) PlainTextContent() string {
 		case MessageSubTypeLink, MessageSubTypeLink2:
 			return fmt.Sprintf("[链接|%s](%s)", m.Contents["title"], m.Contents["url"])
 		case MessageSubTypeFile:
-			return fmt.Sprintf("[文件|%s](http://%s/file/%s)", m.Contents["title"], m.Contents["host"], m.Contents["md5"])
+			return fmt.Sprintf("[文件|%s](http://%s/file/%s)", m.Contents["title"], host, m.Contents["md5"])
 		case MessageSubTypeGIF:
 			if m.Contents["cdnurl"] != nil {
 				if u, ok := m.Contents["cdnurl"].(string); ok && strings.HasPrefix(u, "http") {

@@ -6,6 +6,9 @@ import (
 	"runtime"
 	"time"
 
+	"net"
+	"strings"
+
 	"github.com/sjzar/chatlog/internal/chatlog/ctx"
 	"github.com/sjzar/chatlog/internal/ui/footer"
 	"github.com/sjzar/chatlog/internal/ui/form"
@@ -13,6 +16,7 @@ import (
 	"github.com/sjzar/chatlog/internal/ui/infobar"
 	"github.com/sjzar/chatlog/internal/ui/menu"
 	"github.com/sjzar/chatlog/internal/wechat"
+	"github.com/sjzar/chatlog/pkg/util"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -156,7 +160,19 @@ func (a *App) refresh() {
 				a.infoBar.UpdateSession(a.ctx.LastSession.Format("2006-01-02 15:04:05"))
 			}
 			if a.ctx.HTTPEnabled {
-				a.infoBar.UpdateHTTPServer(fmt.Sprintf("[green][已启动][white] [%s]", a.ctx.HTTPAddr))
+				addr := a.ctx.HTTPAddr
+				h, _, err := net.SplitHostPort(addr)
+				if err != nil { // Fallback if malformed
+					a.infoBar.UpdateHTTPServer(fmt.Sprintf("[green][已启动][white] [%s]", addr))
+				} else {
+					h = strings.TrimSpace(h)
+					if h == "0.0.0.0" || h == "::" || h == "[::]" || h == "" {
+						lan := util.ComposeLANURL(addr)
+						a.infoBar.UpdateHTTPServer(fmt.Sprintf("[green][已启动][white] [%s]  LAN: %s", addr, lan))
+					} else {
+						a.infoBar.UpdateHTTPServer(fmt.Sprintf("[green][已启动][white] [%s]", addr))
+					}
+				}
 			} else {
 				a.infoBar.UpdateHTTPServer("[未启动]")
 			}
@@ -475,6 +491,11 @@ func (a *App) settingSelected(i *menu.Item) {
 			action:      a.settingHTTPPort,
 		},
 		{
+			name:        "切换局域网监听",
+			description: "在 127.0.0.1 与 0.0.0.0 之间切换，便于开启/关闭局域网访问",
+			action:      a.toggleListen,
+		},
+		{
 			name:        "设置工作目录",
 			description: "配置数据解密后的存储目录",
 			action:      a.settingWorkDir,
@@ -541,6 +562,62 @@ func (a *App) settingHTTPPort() {
 
 	a.mainPages.AddPage("submenu2", formView, true, true)
 	a.SetFocus(formView)
+}
+
+// toggleListen 在 127.0.0.1 与 0.0.0.0 之间切换监听主机，保持端口不变
+func (a *App) toggleListen() {
+	// 计算新的地址
+	cur := a.ctx.GetHTTPAddr()
+	host, port, err := net.SplitHostPort(cur)
+	if err != nil || port == "" {
+		// 回退到默认端口
+		host = "127.0.0.1"
+		port = "5030"
+	}
+	h := strings.TrimSpace(host)
+	var newHost string
+	if h == "0.0.0.0" || h == "::" || h == "[::]" || h == "" {
+		newHost = "127.0.0.1"
+	} else {
+		newHost = "0.0.0.0"
+	}
+	newAddr := net.JoinHostPort(newHost, port)
+
+	// 若服务正在运行，则重启服务以应用新监听
+	if a.ctx.HTTPEnabled {
+		modal := tview.NewModal().SetText("正在切换监听地址...")
+		a.mainPages.AddPage("modal", modal, true, true)
+		a.SetFocus(modal)
+		go func() {
+			// 停止服务
+			stopErr := a.m.StopService()
+			if stopErr == nil {
+				// 设置新地址
+				_ = a.m.SetHTTPAddr(newAddr)
+				// 启动服务
+				startErr := a.m.StartService()
+				a.QueueUpdateDraw(func() {
+					a.mainPages.RemovePage("modal")
+					if startErr != nil {
+						a.showError(fmt.Errorf("切换失败: %v", startErr))
+					} else {
+						a.showInfo("已切换监听地址为 " + newAddr)
+					}
+				})
+				return
+			}
+			// 停止失败时直接报错
+			a.QueueUpdateDraw(func() {
+				a.mainPages.RemovePage("modal")
+				a.showError(fmt.Errorf("切换失败: %v", stopErr))
+			})
+		}()
+		return
+	}
+
+	// 服务未运行，仅更新配置
+	_ = a.m.SetHTTPAddr(newAddr)
+	a.showInfo("已切换监听地址为 " + newAddr)
 }
 
 // settingWorkDir 设置工作目录
