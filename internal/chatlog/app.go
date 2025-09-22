@@ -168,7 +168,7 @@ func (a *App) refresh() {
 					h = strings.TrimSpace(h)
 					if h == "0.0.0.0" || h == "::" || h == "[::]" || h == "" {
 						lan := util.ComposeLANURL(addr)
-						a.infoBar.UpdateHTTPServer(fmt.Sprintf("[green][已启动][white] [%s]  LAN: %s", addr, lan))
+						a.infoBar.UpdateHTTPServer(fmt.Sprintf("[green][已启动][white] [%s]", lan))
 					} else {
 						a.infoBar.UpdateHTTPServer(fmt.Sprintf("[green][已启动][white] [%s]", addr))
 					}
