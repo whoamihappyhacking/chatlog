@@ -55,6 +55,11 @@ var Groups = []*dbm.Group{
 		Pattern:   `^media_([0-9]?[0-9])?\.db$`,
 		BlackList: []string{},
 	},
+    {
+        Name:      "headimg",
+        Pattern:   `^head_image\.db$`,
+        BlackList: []string{},
+    },
 }
 
 // MessageDBInfo 存储消息数据库的信息
@@ -749,4 +754,23 @@ func (ds *DataSource) GetVoice(ctx context.Context, key string) (*model.Media, e
 
 func (ds *DataSource) Close() error {
 	return ds.dbm.Close()
+}
+
+// GetAvatar for v4: read head_image.db -> head_image(username, image_buffer)
+func (ds *DataSource) GetAvatar(ctx context.Context, username string, size string) (*model.Avatar, error) {
+	if username == "" {
+		return nil, errors.ErrKeyEmpty
+	}
+	// open head_image db
+	db, err := ds.dbm.GetDB("headimg")
+	if err != nil {
+		return nil, errors.ErrAvatarNotFound
+	}
+	// table may be head_image, columns: username, image_buffer (jfif), update_time, md5
+	row := db.QueryRowContext(ctx, `SELECT image_buffer FROM head_image WHERE username = ?`, username)
+	var buf []byte
+	if err := row.Scan(&buf); err != nil || len(buf) == 0 {
+		return nil, errors.ErrAvatarNotFound
+	}
+	return &model.Avatar{Username: username, ContentType: "image/jpeg", Data: buf}, nil
 }

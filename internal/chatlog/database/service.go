@@ -87,6 +87,15 @@ func (s *Service) GetDB() *wechatdb.DB {
 	return s.db
 }
 
+// GetWorkDir exposes the underlying work directory where decrypted DB files are stored.
+// This is useful for higher layers (HTTP) to compute DB sizes for summary statistics.
+func (s *Service) GetWorkDir() string {
+	if s == nil || s.conf == nil {
+		return ""
+	}
+	return s.conf.GetWorkDir()
+}
+
 func (s *Service) GetMessages(start, end time.Time, talker string, sender string, keyword string, limit, offset int) ([]*model.Message, error) {
 	return s.db.GetMessages(start, end, talker, sender, keyword, limit, offset)
 }
@@ -106,6 +115,10 @@ func (s *Service) GetSessions(key string, limit, offset int) (*wechatdb.GetSessi
 
 func (s *Service) GetMedia(_type string, key string) (*model.Media, error) {
 	return s.db.GetMedia(_type, key)
+}
+
+func (s *Service) GetAvatar(username string, size string) (*model.Avatar, error) {
+	return s.db.GetAvatar(username, size)
 }
 
 func (s *Service) initWebhook() error {

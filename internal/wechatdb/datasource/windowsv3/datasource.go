@@ -776,3 +776,31 @@ func (ds *DataSource) GetVoice(ctx context.Context, key string) (*model.Media, e
 func (ds *DataSource) Close() error {
 	return ds.dbm.Close()
 }
+
+// GetAvatar returns avatar info for a username on Windows v3 (MicroMsg.db -> ContactHeadImgUrl)
+func (ds *DataSource) GetAvatar(ctx context.Context, username string, size string) (*model.Avatar, error) {
+	if username == "" {
+		return nil, errors.ErrKeyEmpty
+	}
+	db, err := ds.dbm.GetDB(Contact)
+	if err != nil {
+		return nil, err
+	}
+	query := `SELECT IFNULL(smallHeadImgUrl, ''), IFNULL(bigHeadImgUrl, '') FROM ContactHeadImgUrl WHERE usrName = ?`
+	row := db.QueryRowContext(ctx, query, username)
+	var small, big string
+	if err := row.Scan(&small, &big); err != nil {
+		return nil, errors.ErrAvatarNotFound
+	}
+	url := small
+	if strings.ToLower(size) == "big" && big != "" {
+		url = big
+	}
+	if url == "" {
+		url = big
+	}
+	if url == "" {
+		return nil, errors.ErrAvatarNotFound
+	}
+	return &model.Avatar{Username: username, URL: url}, nil
+}

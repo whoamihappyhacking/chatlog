@@ -903,20 +903,63 @@
                     copyToClipboard(urlText, this, "已复制URL!");
                 });
 
-            // 通用复制功能
+            // 通用复制功能（支持非安全上下文的回退方案）
             function copyToClipboard(text, button, successMessage) {
-                navigator.clipboard
-                    .writeText(text)
-                    .then(() => {
-                        const originalText = button.textContent;
-                        button.textContent = successMessage;
-                        setTimeout(() => {
-                            button.textContent = originalText;
-                        }, 2000);
-                    })
-                    .catch((err) => {
-                        console.error("复制失败:", err);
-                    });
+                const originalText = button.textContent;
+                const toast = (msg) => {
+                    button.textContent = msg;
+                    setTimeout(() => {
+                        button.textContent = originalText;
+                    }, 2000);
+                };
+
+                // 无可复制内容
+                if (!text || text.trim() === "") {
+                    toast("无可复制内容");
+                    return;
+                }
+
+                // 现代 API，要求安全上下文（https 或 localhost）
+                if (navigator.clipboard && window.isSecureContext) {
+                    navigator.clipboard
+                        .writeText(text)
+                        .then(() => {
+                            toast(successMessage);
+                        })
+                        .catch((err) => {
+                            // 失败时尝试回退
+                            const ok = fallbackCopyTextToClipboard(text);
+                            toast(ok ? successMessage : "复制失败");
+                            if (!ok) console.error("复制失败:", err);
+                        });
+                    return;
+                }
+
+                // 非安全上下文或不支持 navigator.clipboard 时，使用回退方案
+                const ok = fallbackCopyTextToClipboard(text);
+                toast(ok ? successMessage : "复制失败");
+            }
+
+            // 回退复制方案：创建隐藏 textarea，使用 execCommand('copy')
+            function fallbackCopyTextToClipboard(text) {
+                try {
+                    const textarea = document.createElement("textarea");
+                    textarea.value = text;
+                    // 避免页面滚动抖动
+                    textarea.style.position = "fixed";
+                    textarea.style.top = "-9999px";
+                    textarea.style.left = "-9999px";
+                    textarea.setAttribute("readonly", "");
+                    document.body.appendChild(textarea);
+                    textarea.focus();
+                    textarea.select();
+                    const ok = document.execCommand("copy");
+                    document.body.removeChild(textarea);
+                    return ok;
+                } catch (e) {
+                    console.error("回退复制失败:", e);
+                    return false;
+                }
             }
         </script>
     </body>

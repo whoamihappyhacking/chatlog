@@ -30,6 +30,9 @@ type DataSource interface {
 	// 媒体
 	GetMedia(ctx context.Context, _type string, key string) (*model.Media, error)
 
+	// 头像
+	GetAvatar(ctx context.Context, username string, size string) (*model.Avatar, error)
+
 	// 设置回调函数
 	SetCallback(group string, callback func(event fsnotify.Event) error) error
 

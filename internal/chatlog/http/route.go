@@ -3,6 +3,7 @@ package http
 import (
 	"embed"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -61,6 +62,7 @@ func (s *Service) initMediaRouter() {
 	s.router.GET("/file/*key", func(c *gin.Context) { s.handleMedia(c, "file") })
 	s.router.GET("/voice/*key", func(c *gin.Context) { s.handleMedia(c, "voice") })
 	s.router.GET("/data/*path", s.handleMediaData)
+	s.router.GET("/avatar/:username", s.handleAvatar)
 }
 
 func (s *Service) initAPIRouter() {
@@ -71,6 +73,7 @@ func (s *Service) initAPIRouter() {
 		api.GET("/chatroom", s.handleChatRooms)
 		api.GET("/session", s.handleSessions)
 		api.GET("/diary", s.handleDiary)
+		api.GET("/summary", s.handleSummary)
 	}
 }
 
@@ -78,6 +81,215 @@ func (s *Service) initMCPRouter() {
 	s.router.Any("/mcp", func(c *gin.Context) { s.mcpStreamableServer.ServeHTTP(c.Writer, c.Request) })
 	s.router.Any("/sse", func(c *gin.Context) { s.mcpSSEServer.ServeHTTP(c.Writer, c.Request) })
 	s.router.Any("/message", func(c *gin.Context) { s.mcpSSEServer.ServeHTTP(c.Writer, c.Request) })
+}
+
+// handleSummary outputs a dashboard summary JSON. For now it serves a template JSON
+// compatible with tools/json/index.json. In future we can compute real data.
+// GET /api/v1/summary
+func (s *Service) handleSummary(c *gin.Context) {
+	// dynamic=1 triggers dynamic summary generation; otherwise fall back to template JSON
+	dynamic := c.Query("dynamic") == "1"
+
+	// Try to load a template JSON from tools/json/index.json if present
+	// Otherwise, return an empty structure with HTTP 200.
+	workdir := s.conf.GetDataDir()
+	candidates := []string{
+		filepath.Join("tools", "json", "index.json"),
+		filepath.Join(workdir, "tools", "json", "index.json"),
+	}
+	var raw []byte
+	for _, p := range candidates {
+		if b, err := os.ReadFile(p); err == nil && len(b) > 0 {
+			raw = b
+			break
+		}
+	}
+
+	var v any
+	if dynamic {
+		// compute dynamic summary
+		sum := s.computeDynamicSummary()
+		v = sum
+	} else {
+		if len(raw) > 0 {
+			if err := json.Unmarshal(raw, &v); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid summary template", "detail": err.Error()})
+				return
+			}
+		} else {
+			v = gin.H{"dashboard_report": gin.H{}}
+		}
+	}
+
+	// Optional: save to file in workdir when save=1
+	if c.Query("save") == "1" {
+		// default filename
+		filename := c.DefaultQuery("filename", "summary.json")
+		if filename == "" { filename = "summary.json" }
+		outPath := filepath.Join(s.conf.GetDataDir(), filename)
+		if dir := filepath.Dir(outPath); dir != "." { _ = os.MkdirAll(dir, 0o755) }
+		var out []byte
+		var err error
+		if !dynamic && len(raw) > 0 { out = raw } else { out, err = json.MarshalIndent(v, "", "  "); if err != nil { c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to marshal summary", "detail": err.Error()}); return } }
+		if err := os.WriteFile(outPath, out, 0o644); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save summary", "detail": err.Error()})
+			return
+		}
+		// If download=1, stream the file as attachment
+		if c.Query("download") == "1" {
+			c.Header("Content-Type", "application/json")
+			c.Header("Content-Disposition", "attachment; filename="+filepath.Base(outPath))
+			c.Data(http.StatusOK, "application/json", out)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"saved": true, "path": outPath})
+		return
+	}
+
+	// Optional: direct download when download=1
+	if c.Query("download") == "1" {
+		b := raw
+		if dynamic || len(b) == 0 { var err error; b, err = json.MarshalIndent(v, "", "  "); if err != nil { c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to marshal summary", "detail": err.Error()}); return } }
+		c.Header("Content-Type", "application/json")
+		c.Header("Content-Disposition", "attachment; filename=summary.json")
+		c.Data(http.StatusOK, "application/json", b)
+		return
+	}
+
+	c.JSON(http.StatusOK, v)
+}
+
+// computeDynamicSummary builds a lightweight dynamic dashboard JSON with basic metrics.
+// It avoids heavy full DB scans and uses existing repository APIs for acceptable performance.
+func (s *Service) computeDynamicSummary() any {
+	// Sizes
+	dataDir := s.conf.GetDataDir()
+	workDir := dataDir // prefer dataDir for media; if database layer exposes workDir, use it
+	if s.db != nil {
+		if wd := s.db.GetWorkDir(); wd != "" { workDir = wd }
+	}
+	dirSize := safeDirSize(dataDir)
+	dbSize := estimateDBSize(workDir)
+
+	// Sessions timeline (approximate earliest/latest by NTime)
+	minTime := time.Time{}
+	maxTime := time.Time{}
+	if sessions, err := s.db.GetSessions("", 0, 0); err == nil {
+		for _, it := range sessions.Items {
+			t := it.NTime
+			if t.IsZero() { continue }
+			if minTime.IsZero() || t.Before(minTime) { minTime = t }
+			if maxTime.IsZero() || t.After(maxTime) { maxTime = t }
+		}
+	}
+
+	// Contacts basic stats
+	totalContacts := 0
+	friends := 0
+	nonFriends := 0
+	if contacts, err := s.db.GetContacts("", 0, 0); err == nil {
+		totalContacts = len(contacts.Items)
+		for _, c := range contacts.Items { if c.IsFriend { friends++ } else { nonFriends++ } }
+	}
+
+	// Chatrooms top by member count
+	roomsList := make([]map[string]any, 0)
+	if rooms, err := s.db.GetChatRooms("", 0, 0); err == nil {
+		for _, r := range rooms.Items {
+			roomsList = append(roomsList, map[string]any{
+				"name": r.Name,
+				"nick": r.NickName,
+				"owner": r.Owner,
+				"members": len(r.Users),
+			})
+		}
+		// simple sort: descending by members
+		// do inline selection sort to avoid importing sort for tiny lists
+		for i := 0; i < len(roomsList); i++ {
+			maxIdx := i
+			for j := i + 1; j < len(roomsList); j++ {
+				if roomsList[j]["members"].(int) > roomsList[maxIdx]["members"].(int) { maxIdx = j }
+			}
+			if maxIdx != i { roomsList[i], roomsList[maxIdx] = roomsList[maxIdx], roomsList[i] }
+		}
+		if len(roomsList) > 20 { roomsList = roomsList[:20] }
+	}
+
+	// Build JSON structure
+	dash := map[string]any{
+		"db_stats": map[string]any{
+			"db_size_mb":  roundMB(dbSize),
+			"dir_size_mb": roundMB(dirSize),
+		},
+		"timeline": map[string]any{
+			"start":  formatTime(minTime),
+			"end":    formatTime(maxTime),
+			"days":   diffDays(minTime, maxTime),
+		},
+		"contact_stats": map[string]any{
+			"total": totalContacts,
+			"friends": friends,
+			"non_friends": nonFriends,
+		},
+		"group_stats": map[string]any{
+			"top_member_groups": roomsList,
+		},
+		// Placeholders for future dynamic enrichment
+		"message_stats": map[string]any{
+			"total": 0,
+			"by_type": map[string]int{},
+		},
+	}
+	return map[string]any{"dashboard_report": dash}
+}
+
+func roundMB(bytes int64) float64 {
+	if bytes <= 0 { return 0 }
+	// 1 MB = 1024*1024
+	mb := float64(bytes) / (1024.0 * 1024.0)
+	// round to 2 decimals
+	return float64(int(mb*100+0.5)) / 100.0
+}
+
+func diffDays(a, b time.Time) int {
+	if a.IsZero() || b.IsZero() { return 0 }
+	if b.Before(a) { a, b = b, a }
+	d := b.Sub(a).Hours() / 24.0
+	if d < 0 { return 0 }
+	return int(d + 0.5)
+}
+
+func formatTime(t time.Time) string {
+	if t.IsZero() { return "" }
+	return t.Format("2006-01-02 15:04:05")
+}
+
+// safeDirSize walks a directory and sums file sizes; returns 0 on error.
+func safeDirSize(path string) int64 {
+	var total int64
+	if path == "" { return 0 }
+	_ = filepath.Walk(path, func(p string, info os.FileInfo, err error) error {
+		if err != nil { return nil }
+		if info == nil || info.IsDir() { return nil }
+		total += info.Size()
+		return nil
+	})
+	return total
+}
+
+// estimateDBSize sums sizes of common DB files under workDir
+func estimateDBSize(workDir string) int64 {
+	if workDir == "" { return 0 }
+	var total int64
+	_ = filepath.Walk(workDir, func(p string, info os.FileInfo, err error) error {
+		if err != nil || info == nil || info.IsDir() { return nil }
+		name := strings.ToLower(info.Name())
+		if strings.HasSuffix(name, ".db") || strings.HasSuffix(name, ".sqlite") || strings.HasSuffix(name, ".sqlite3") || strings.HasSuffix(name, ".db-wal") || strings.HasSuffix(name, ".db-shm") {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total
 }
 
 func (s *Service) handleChatlog(c *gin.Context) {
@@ -116,7 +328,7 @@ func (s *Service) handleChatlog(c *gin.Context) {
 			switch strings.ToLower(q.Format) {
 			case "html":
 				c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
-				c.Writer.WriteString("<html><head><meta charset=\"utf-8\"><title>Chatlog</title><style>body{font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.4;}details{margin:8px 0;padding:4px 8px;border:1px solid #ddd;border-radius:4px; background:#fafafa;}summary{cursor:pointer;font-weight:600;} .msg{margin:4px 0;padding:4px 6px;border-left:3px solid #3498db;background:#fff;} .meta{color:#666;font-size:12px;} pre{white-space:pre-wrap;word-break:break-word;margin:2px 0;} .talker{color:#2c3e50;} .sender{color:#8e44ad;} .time{color:#16a085;} .content{margin-left:4px;} a.media{color:#2c3e50;text-decoration:none;} a.media:hover{text-decoration:underline;}</style></head><body>")
+				c.Writer.WriteString("<html><head><meta charset=\"utf-8\"><title>Chatlog</title><style>body{font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.4;}details{margin:8px 0;padding:4px 8px;border:1px solid #ddd;border-radius:4px; background:#fafafa;}summary{cursor:pointer;font-weight:600;} .msg{margin:4px 0;padding:4px 6px;border-left:3px solid #3498db;background:#fff;} .msg-row{display:flex;gap:8px;align-items:flex-start;} .avatar{width:28px;height:28px;border-radius:6px;object-fit:cover;background:#f2f2f2;border:1px solid #eee;flex:0 0 28px} .msg-content{flex:1;min-width:0} .meta{color:#666;font-size:12px;} pre{white-space:pre-wrap;word-break:break-word;margin:2px 0;} .talker{color:#2c3e50;} .sender{color:#8e44ad;} .time{color:#16a085;} .content{margin-left:4px;} a.media{color:#2c3e50;text-decoration:none;} a.media:hover{text-decoration:underline;}</style></head><body>")
 				c.Writer.WriteString(fmt.Sprintf("<h2>All Messages %s ~ %s</h2>", start.Format("2006-01-02 15:04:05"), end.Format("2006-01-02 15:04:05")))
 				for _, g := range groups {
 					title := g.Talker
@@ -127,7 +339,8 @@ func (s *Service) handleChatlog(c *gin.Context) {
 							senderDisplay := m.Sender
 							if m.IsSelf { senderDisplay = "我" }
 							if m.SenderName != "" { senderDisplay = template.HTMLEscapeString(m.SenderName) + "(" + template.HTMLEscapeString(senderDisplay) + ")" } else { senderDisplay = template.HTMLEscapeString(senderDisplay) }
-							c.Writer.WriteString("<div class=\"msg\"><div class=\"meta\"><span class=\"sender\">"+ senderDisplay +"</span><span class=\"time\">"+ m.Time.Format("2006-01-02 15:04:05") +"</span></div><pre>"+ messageHTMLPlaceholder(m) +"</pre></div>")
+							aurl := template.HTMLEscapeString(s.composeAvatarURL(m.Sender) + "?size=big")
+							c.Writer.WriteString("<div class=\"msg\"><div class=\"msg-row\"><img class=\"avatar\" src=\"" + aurl + "\" loading=\"lazy\" alt=\"avatar\" onerror=\"this.style.visibility='hidden'\"/><div class=\"msg-content\"><div class=\"meta\"><span class=\"sender\">"+ senderDisplay +"</span><span class=\"time\">"+ m.Time.Format("2006-01-02 15:04:05") +"</span></div><pre>"+ messageHTMLPlaceholder(m) +"</pre></div></div></div>")
 						}
 						c.Writer.WriteString("</details>")
 					}
@@ -172,17 +385,20 @@ func (s *Service) handleChatlog(c *gin.Context) {
 		switch strings.ToLower(q.Format) {
 		case "html":
 			c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
-			c.Writer.WriteString("<html><head><meta charset=\"utf-8\"><title>Chatlog</title><style>body{font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.4;} .msg{margin:8px 0;padding:6px 8px;border-left:3px solid #3498db;background:#fafafa;} .meta{color:#666;font-size:12px;margin-bottom:2px;} pre{white-space:pre-wrap;word-break:break-word;margin:0;} .sender{color:#8e44ad;} .time{color:#16a085;margin-left:6px;} a.media{color:#2c3e50;text-decoration:none;} a.media:hover{text-decoration:underline;}</style></head><body>")
+			c.Writer.WriteString("<html><head><meta charset=\"utf-8\"><title>Chatlog</title><style>body{font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.4;} .msg{margin:8px 0;padding:6px 8px;border-left:3px solid #3498db;background:#fafafa;} .msg-row{display:flex;gap:8px;align-items:flex-start;} .avatar{width:28px;height:28px;border-radius:6px;object-fit:cover;background:#f2f2f2;border:1px solid #eee;flex:0 0 28px} .msg-content{flex:1;min-width:0} .meta{color:#666;font-size:12px;margin-bottom:2px;} pre{white-space:pre-wrap;word-break:break-word;margin:0;} .sender{color:#8e44ad;} .time{color:#16a085;margin-left:6px;} a.media{color:#2c3e50;text-decoration:none;} a.media:hover{text-decoration:underline;}</style></head><body>")
 			c.Writer.WriteString(fmt.Sprintf("<h2>Messages %s ~ %s (%s)</h2>", start.Format("2006-01-02 15:04:05"), end.Format("2006-01-02 15:04:05"), template.HTMLEscapeString(q.Talker)))
 			for _, m := range messages {
 				m.SetContent("host", c.Request.Host)
-				c.Writer.WriteString("<div class=\"msg\"><div class=\"meta\"><span class=\"sender\">")
+				c.Writer.WriteString("<div class=\"msg\"><div class=\"msg-row\">")
+				aurl := template.HTMLEscapeString(s.composeAvatarURL(m.Sender) + "?size=big")
+				c.Writer.WriteString("<img class=\"avatar\" src=\"" + aurl + "\" loading=\"lazy\" alt=\"avatar\" onerror=\"this.style.visibility='hidden'\"/>")
+				c.Writer.WriteString("<div class=\"msg-content\"><div class=\"meta\"><span class=\"sender\">")
 				if m.SenderName != "" { c.Writer.WriteString(template.HTMLEscapeString(m.SenderName)+"(") }
 				c.Writer.WriteString(template.HTMLEscapeString(m.Sender))
 				if m.SenderName != "" { c.Writer.WriteString(")") }
 				c.Writer.WriteString("</span><span class=\"time\">"+m.Time.Format("2006-01-02 15:04:05")+"</span></div><pre>")
 				c.Writer.WriteString(messageHTMLPlaceholder(m))
-				c.Writer.WriteString("</pre></div>")
+				c.Writer.WriteString("</pre></div></div></div>")
 			}
 			c.Writer.WriteString(previewHTMLSnippet)
 			c.Writer.WriteString("</body></html>")
@@ -231,8 +447,37 @@ func (s *Service) handleContacts(c *gin.Context) {
 
 	format := strings.ToLower(q.Format)
 	switch format {
+	case "html":
+		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+		c.Writer.WriteHeader(http.StatusOK)
+		c.Writer.Write([]byte(`<style>
+  .contacts{font-family:Arial,Helvetica,sans-serif;font-size:14px;}
+  .c-item{display:flex;align-items:center;gap:10px;border:1px solid #ddd;border-radius:6px;padding:6px 8px;margin:6px 0;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.04);} 
+  .c-avatar{width:36px;height:36px;border-radius:50%;object-fit:cover;background:#f2f2f2;border:1px solid #eee}
+  .c-name{font-weight:600;color:#2c3e50}
+  .c-sub{color:#666;font-size:12px}
+</style><div class="contacts">`))
+		for _, contact := range list.Items {
+			uname := template.HTMLEscapeString(contact.UserName)
+			nick := template.HTMLEscapeString(contact.NickName)
+			remark := template.HTMLEscapeString(contact.Remark)
+			alias := template.HTMLEscapeString(contact.Alias)
+			// compose avatar URL
+			aurl := template.HTMLEscapeString(s.composeAvatarURL(contact.UserName))
+			c.Writer.WriteString(`<div class="c-item">`)
+			c.Writer.WriteString(`<img class="c-avatar" src="` + aurl + `" loading="lazy" onerror="this.style.visibility='hidden'"/>`)
+			c.Writer.WriteString(`<div>`)
+			c.Writer.WriteString(`<div class="c-name">` + nick + `</div>`)
+			c.Writer.WriteString(`<div class="c-sub">` + uname)
+			if remark != "" { c.Writer.WriteString(` · ` + remark) }
+			if alias != "" { c.Writer.WriteString(` · alias:` + alias) }
+			c.Writer.WriteString(`</div></div></div>`)
+		}
+		c.Writer.WriteString(`</div>`)
+		return
 	case "json":
-		// json
+		// fill avatar urls
+		for _, item := range list.Items { item.AvatarURL = s.composeAvatarURL(item.UserName) }
 		c.JSON(http.StatusOK, list)
 	default:
 		// csv
@@ -245,13 +490,43 @@ func (s *Service) handleContacts(c *gin.Context) {
 		c.Writer.Header().Set("Cache-Control", "no-cache")
 		c.Writer.Header().Set("Connection", "keep-alive")
 		c.Writer.Flush()
-
-		c.Writer.WriteString("UserName,Alias,Remark,NickName\n")
+		c.Writer.WriteString("UserName,Alias,Remark,NickName,AvatarURL\n")
 		for _, contact := range list.Items {
-			c.Writer.WriteString(fmt.Sprintf("%s,%s,%s,%s\n", contact.UserName, contact.Alias, contact.Remark, contact.NickName))
+			avatarURL := s.composeAvatarURL(contact.UserName)
+			c.Writer.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s\n", contact.UserName, contact.Alias, contact.Remark, contact.NickName, avatarURL))
 		}
 		c.Writer.Flush()
 	}
+}
+
+// composeAvatarURL builds a relative URL that the server can serve for any username
+func (s *Service) composeAvatarURL(username string) string {
+	if username == "" { return "" }
+	return "/avatar/" + username
+}
+
+// handleAvatar serves avatar by username. For v3 returns redirect to remote URL; for v4 streams bytes.
+func (s *Service) handleAvatar(c *gin.Context) {
+	username := c.Param("username")
+	size := c.Query("size") // optional: small|big
+	avatar, err := s.db.GetAvatar(username, size)
+	if err != nil {
+		errors.Err(c, err)
+		return
+	}
+	if avatar == nil {
+		errors.Err(c, errors.ErrAvatarNotFound)
+		return
+	}
+	if avatar.URL != "" {
+		// external URL, redirect
+		c.Redirect(http.StatusFound, avatar.URL)
+		return
+	}
+	// inline bytes
+	ct := avatar.ContentType
+	if ct == "" { ct = "image/jpeg" }
+	c.Data(http.StatusOK, ct, avatar.Data)
 }
 
 func (s *Service) handleChatRooms(c *gin.Context) {
@@ -413,7 +688,7 @@ func (s *Service) handleDiary(c *gin.Context) {
 	switch format {
 	case "html":
 		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
-		c.Writer.WriteString(`<html><head><meta charset="utf-8"><title>Diary</title><style>body{font-family:Arial,Helvetica,sans-serif;font-size:14px;}details{margin:8px 0;padding:6px 8px;border:1px solid #ddd;border-radius:6px;background:#fafafa;}summary{cursor:pointer;font-weight:600;} .msg{margin:4px 0;padding:4px 6px;border-left:3px solid #2ecc71;background:#fff;} .meta{color:#666;font-size:12px;margin-bottom:2px;} pre{white-space:pre-wrap;word-break:break-word;margin:0;} .sender{color:#27ae60;} .time{color:#16a085;margin-left:6px;} a.media{color:#2c3e50;text-decoration:none;} a.media:hover{text-decoration:underline;}</style></head><body>`)
+	c.Writer.WriteString(`<html><head><meta charset="utf-8"><title>Diary</title><style>body{font-family:Arial,Helvetica,sans-serif;font-size:14px;}details{margin:8px 0;padding:6px 8px;border:1px solid #ddd;border-radius:6px;background:#fafafa;}summary{cursor:pointer;font-weight:600;} .msg{margin:4px 0;padding:4px 6px;border-left:3px solid #2ecc71;background:#fff;} .msg-row{display:flex;gap:8px;align-items:flex-start;} .avatar{width:28px;height:28px;border-radius:6px;object-fit:cover;background:#f2f2f2;border:1px solid #eee;flex:0 0 28px} .msg-content{flex:1;min-width:0} .meta{color:#666;font-size:12px;margin-bottom:2px;} pre{white-space:pre-wrap;word-break:break-word;margin:0;} .sender{color:#27ae60;} .time{color:#16a085;margin-left:6px;} a.media{color:#2c3e50;text-decoration:none;} a.media:hover{text-decoration:underline;}</style></head><body>`)
 		c.Writer.WriteString(fmt.Sprintf("<h2>最近%dh我参与过的会话全部消息（%s ~ %s）</h2>", hours, start.Format("2006-01-02 15:04:05"), end.Format("2006-01-02 15:04:05")))
 		for _, g := range groups {
 			title := g.Talker
@@ -428,7 +703,8 @@ func (s *Service) handleDiary(c *gin.Context) {
 				} else {
 					senderDisplay = template.HTMLEscapeString(senderDisplay)
 				}
-				c.Writer.WriteString("<div class=\"msg\"><div class=\"meta\"><span class=\"sender\">" + senderDisplay + "</span><span class=\"time\">" + m.Time.Format("2006-01-02 15:04:05") + "</span></div><pre>" + messageHTMLPlaceholder(m) + "</pre></div>")
+				aurl := template.HTMLEscapeString(s.composeAvatarURL(m.Sender) + "?size=big")
+				c.Writer.WriteString("<div class=\"msg\"><div class=\"msg-row\"><img class=\"avatar\" src=\"" + aurl + "\" loading=\"lazy\" alt=\"avatar\" onerror=\"this.style.visibility='hidden'\"/><div class=\"msg-content\"><div class=\"meta\"><span class=\"sender\">" + senderDisplay + "</span><span class=\"time\">" + m.Time.Format("2006-01-02 15:04:05") + "</span></div><pre>" + messageHTMLPlaceholder(m) + "</pre></div></div></div>")
 			}
 			c.Writer.WriteString("</details>")
 		}

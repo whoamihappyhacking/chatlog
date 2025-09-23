@@ -58,20 +58,27 @@ build:
 buildcross:
 	@echo "[cross] Interactive cross-compilation selection (Windows/macOS)"
 	@mkdir -p bin
-	@printf "\nSelect target platforms to build (multiple choices, space separated):\n  1) windows/amd64\n  2) windows/arm64\n  3) darwin/amd64 (macOS Intel)\n  4) darwin/arm64 (Apple Silicon)\n> "; \
+	@printf "\nSelect target platforms to build (enter digits, e.g., 134):\n  1) windows/amd64\n  2) windows/arm64\n  3) darwin/amd64 (macOS Intel)\n  4) darwin/arm64 (Apple Silicon)\n> "; \
 	read choices; \
-	for ch in $$choices; do \
+	opts=$$(printf "%s" "$$choices" | tr -cd '1234' | sed 's/./& /g'); \
+	for ch in $$opts; do \
 		case $$ch in \
 			1) \
 				ccbin=$${CC_WIN_AMD64:-x86_64-w64-mingw32-gcc}; \
 				: # On Windows host: do not force CC, use local toolchain \
 				if [ "$(OS)" = "Windows_NT" ]; then \
 					echo "🧭 Host: Windows"; \
-					GOOS=windows GOARCH=amd64 CGO_ENABLED=1 $(GO) build -trimpath $(LDFLAGS) -o bin/$(BINARY_NAME)_windows_amd64.exe main.go; \
+					tmp="bin/$(BINARY_NAME)_windows_amd64.exe.new.$$RANDOM"; \
+					GOOS=windows GOARCH=amd64 CGO_ENABLED=1 $(GO) build -trimpath $(LDFLAGS) -o "$$tmp" main.go && \
+					{ mv -f "$$tmp" "bin/$(BINARY_NAME)_windows_amd64.exe" 2>/dev/null || \
+					  echo "⚠️  Target locked, kept: $$tmp"; }; \
 				else \
 					if command -v "$$ccbin" >/dev/null 2>&1; then \
 						echo "⚙️ Using CC=$$ccbin"; \
-						env CC="$$ccbin" GOOS=windows GOARCH=amd64 CGO_ENABLED=1 $(GO) build -trimpath $(LDFLAGS) -o bin/$(BINARY_NAME)_windows_amd64.exe main.go; \
+						tmp="bin/$(BINARY_NAME)_windows_amd64.exe.new.$$RANDOM"; \
+						env CC="$$ccbin" GOOS=windows GOARCH=amd64 CGO_ENABLED=1 $(GO) build -trimpath $(LDFLAGS) -o "$$tmp" main.go && \
+						{ mv -f "$$tmp" "bin/$(BINARY_NAME)_windows_amd64.exe" 2>/dev/null || \
+						  echo "⚠️  Target locked, kept: $$tmp"; }; \
 					else \
 						echo "⏭️  Skip windows/amd64: $$ccbin not found (Arch: sudo pacman -S --needed mingw-w64-gcc)"; \
 					fi; \
@@ -83,14 +90,20 @@ buildcross:
 				if [ "$(OS)" = "Windows_NT" ]; then \
 					if command -v "$$ccbin" >/dev/null 2>&1; then \
 						echo "⚙️  Using CC=$$ccbin"; \
-						env CC="$$ccbin" GOOS=windows GOARCH=arm64 CGO_ENABLED=1 $(GO) build -trimpath $(LDFLAGS) -o bin/$(BINARY_NAME)_windows_arm64.exe main.go; \
+						tmp="bin/$(BINARY_NAME)_windows_arm64.exe.new.$$RANDOM"; \
+						env CC="$$ccbin" GOOS=windows GOARCH=arm64 CGO_ENABLED=1 $(GO) build -trimpath $(LDFLAGS) -o "$$tmp" main.go && \
+						{ mv -f "$$tmp" "bin/$(BINARY_NAME)_windows_arm64.exe" 2>/dev/null || \
+						  echo "⚠️  Target locked, kept: $$tmp"; }; \
 					else \
 						echo "⏭️  Skip windows/arm64: $$ccbin not found (MSYS2: pacman -S mingw-w64-aarch64-gcc)"; \
 					fi; \
 				else \
 					if command -v "$$ccbin" >/dev/null 2>&1; then \
 						echo "⚙️  Using CC=$$ccbin"; \
-						env CC="$$ccbin" GOOS=windows GOARCH=arm64 CGO_ENABLED=1 $(GO) build -trimpath $(LDFLAGS) -o bin/$(BINARY_NAME)_windows_arm64.exe main.go; \
+						tmp="bin/$(BINARY_NAME)_windows_arm64.exe.new.$$RANDOM"; \
+						env CC="$$ccbin" GOOS=windows GOARCH=arm64 CGO_ENABLED=1 $(GO) build -trimpath $(LDFLAGS) -o "$$tmp" main.go && \
+						{ mv -f "$$tmp" "bin/$(BINARY_NAME)_windows_arm64.exe" 2>/dev/null || \
+						  echo "⚠️  Target locked, kept: $$tmp"; }; \
 					else \
 						echo "⏭️  Skip windows/arm64: $$ccbin not found (Arch: sudo pacman -S --needed mingw-w64-gcc)"; \
 					fi; \

@@ -9,6 +9,7 @@ var (
 	ErrTalkerEmpty     = New(nil, http.StatusBadRequest, "talker empty").WithStack()
 	ErrKeyEmpty        = New(nil, http.StatusBadRequest, "key empty").WithStack()
 	ErrMediaNotFound   = New(nil, http.StatusNotFound, "media not found").WithStack()
+	ErrAvatarNotFound  = New(nil, http.StatusNotFound, "avatar not found").WithStack()
 	ErrKeyLengthMust32 = New(nil, http.StatusBadRequest, "key length must be 32 bytes").WithStack()
 )
 

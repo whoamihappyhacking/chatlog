@@ -109,3 +109,8 @@ func (r *Repository) chatroomCallback(event fsnotify.Event) error {
 func (r *Repository) Close() error {
 	return r.ds.Close()
 }
+
+// GetAvatar proxies to datasource
+func (r *Repository) GetAvatar(ctx context.Context, username string, size string) (*model.Avatar, error) {
+	return r.ds.GetAvatar(ctx, username, size)
+}

@@ -6,6 +6,8 @@ type Contact struct {
 	Remark   string `json:"remark"`
 	NickName string `json:"nickName"`
 	IsFriend bool   `json:"isFriend"`
+	// AvatarURL is a service-composed URL to fetch avatar image
+	AvatarURL string `json:"avatarUrl,omitempty"`
 }
 
 // CREATE TABLE Contact(

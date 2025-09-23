@@ -129,3 +129,7 @@ func (w *DB) GetMedia(_type string, key string) (*model.Media, error) {
 func (w *DB) SetCallback(group string, callback func(event fsnotify.Event) error) error {
 	return w.ds.SetCallback(group, callback)
 }
+
+func (w *DB) GetAvatar(username string, size string) (*model.Avatar, error) {
+	return w.repo.GetAvatar(context.Background(), username, size)
+}

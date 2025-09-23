@@ -492,7 +492,7 @@ func (a *App) settingSelected(i *menu.Item) {
 		},
 		{
 			name:        "切换局域网监听",
-			description: "在 127.0.0.1 与 0.0.0.0 之间切换，便于开启/关闭局域网访问",
+			description: "切换局域网访问限制",
 			action:      a.toggleListen,
 		},
 		{

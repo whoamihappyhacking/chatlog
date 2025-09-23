@@ -652,3 +652,8 @@ WHERE
 func (ds *DataSource) Close() error {
 	return ds.dbm.Close()
 }
+
+// GetAvatar returns not found for darwin v3 (no head image source known here)
+func (ds *DataSource) GetAvatar(ctx context.Context, username string, size string) (*model.Avatar, error) {
+	return nil, errors.ErrAvatarNotFound
+}
