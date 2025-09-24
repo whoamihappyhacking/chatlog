@@ -802,8 +802,9 @@ func (ds *DataSource) GlobalMessageStats(ctx context.Context) (*model.GlobalMess
 				if stats.EarliestUnix == 0 || (minct > 0 && minct < stats.EarliestUnix) { stats.EarliestUnix = minct }
 				if maxct > stats.LatestUnix { stats.LatestUnix = maxct }
 			}
-			// by type
-			q2 := fmt.Sprintf(`SELECT local_type, COUNT(*) FROM %s GROUP BY local_type`, tbl)
+			// by type (细分 49)
+			// 先统计除 49 之外类型
+			q2 := fmt.Sprintf(`SELECT local_type, COUNT(*) FROM %s WHERE local_type != 49 GROUP BY local_type`, tbl)
 			rows, err := db.QueryContext(ctx, q2)
 			if err == nil {
 				for rows.Next() {
@@ -814,6 +815,46 @@ func (ds *DataSource) GlobalMessageStats(ctx context.Context) (*model.GlobalMess
 					}
 				}
 				rows.Close()
+			}
+			// 针对 49 类型再做细分：简单解析 message_content 判断是文件、链接或通用 XML
+			q49 := fmt.Sprintf(`SELECT message_content FROM %s WHERE local_type = 49`, tbl)
+			orows, err := db.QueryContext(ctx, q49)
+			if err == nil {
+				for orows.Next() {
+					var mc []byte
+					if err := orows.Scan(&mc); err == nil {
+						content := string(mc)
+						// 可能压缩，简单特征判断（保持轻量；深度解压需额外性能，可后续拓展）
+						lc := strings.ToLower(content)
+						if strings.Contains(lc, "<appmsg") {
+							if strings.Contains(lc, "<type>") && strings.Contains(lc, "</type>") {
+								// 简单提取 type 数字
+								i1 := strings.Index(lc, "<type>")
+								i2 := strings.Index(lc[i1+6:], "</type>")
+								if i1 >= 0 && i2 > 0 {
+									val := lc[i1+6 : i1+6+i2]
+									// 常见：6=文件, 5/33=链接(网页), 3=音乐, 4=视频, 其他归类为 XML
+									if strings.TrimSpace(val) == "6" {
+										stats.ByType["文件消息"]++
+										continue
+									}
+									if strings.TrimSpace(val) == "5" || strings.TrimSpace(val) == "33" {
+										stats.ByType["链接消息"]++
+										continue
+									}
+								}
+							}
+							// 兜底：若包含 url 或 http(s) 关键词也认为链接
+							if strings.Contains(lc, "http://") || strings.Contains(lc, "https://") {
+								stats.ByType["链接消息"]++
+								continue
+							}
+							// 再兜底为 XML消息
+							stats.ByType["XML消息"]++
+						}
+					}
+				}
+				orows.Close()
 			}
 		}
 	}

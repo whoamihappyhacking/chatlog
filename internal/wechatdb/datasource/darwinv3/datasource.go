@@ -774,18 +774,43 @@ func (ds *DataSource) GlobalMessageStats(ctx context.Context) (*model.GlobalMess
 				if stats.EarliestUnix == 0 || (minct > 0 && minct < stats.EarliestUnix) { stats.EarliestUnix = minct }
 				if maxct > stats.LatestUnix { stats.LatestUnix = maxct }
 			}
-			// by type
-			q2 := fmt.Sprintf(`SELECT messageType, COUNT(*) FROM %s GROUP BY messageType`, tbl)
+			// by type（先统计非 49）
+			q2 := fmt.Sprintf(`SELECT messageType, COUNT(*) FROM %s WHERE messageType != 49 GROUP BY messageType`, tbl)
 			rows, err := db.QueryContext(ctx, q2)
 			if err == nil {
 				for rows.Next() {
 					var t int64; var cnt int64
 					if err := rows.Scan(&t, &cnt); err == nil {
-						label := mapV4TypeToLabel(t) // 复用 v4 的类型映射
+						label := mapV4TypeToLabel(t)
 						if label != "" { stats.ByType[label] += cnt }
 					}
 				}
 				rows.Close()
+			}
+			// 细分 49
+			q49 := fmt.Sprintf(`SELECT msgContent FROM %s WHERE messageType = 49`, tbl)
+			orows, err := db.QueryContext(ctx, q49)
+			if err == nil {
+				for orows.Next() {
+					var mc string
+					if err := orows.Scan(&mc); err == nil {
+						lc := strings.ToLower(mc)
+						if strings.Contains(lc, "<appmsg") {
+							if strings.Contains(lc, "<type>") && strings.Contains(lc, "</type>") {
+								i1 := strings.Index(lc, "<type>")
+								i2 := strings.Index(lc[i1+6:], "</type>")
+								if i1 >= 0 && i2 > 0 {
+									val := lc[i1+6 : i1+6+i2]
+									if strings.TrimSpace(val) == "6" { stats.ByType["文件消息"]++; continue }
+									if strings.TrimSpace(val) == "5" || strings.TrimSpace(val) == "33" { stats.ByType["链接消息"]++; continue }
+								}
+							}
+						}
+						if strings.Contains(lc, "http://") || strings.Contains(lc, "https://") { stats.ByType["链接消息"]++; continue }
+						stats.ByType["XML消息"]++
+					}
+				}
+				orows.Close()
 			}
 		}
 	}
