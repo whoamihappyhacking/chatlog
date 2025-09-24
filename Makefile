@@ -53,7 +53,7 @@ test:
 build:
 	@echo "🔨  Building for current platform..."
 	@mkdir -p bin
-	CGO_ENABLED=1 $(GO) build -trimpath $(LDFLAGS) -o bin/$(BINARY_NAME) main.go
+	@CGO_ENABLED=1 $(GO) build -trimpath $(LDFLAGS) -o bin/$(BINARY_NAME) main.go
 
 buildcross:
 	@echo "[cross] Interactive cross-compilation selection (Windows/macOS)"
@@ -74,7 +74,7 @@ buildcross:
 					  echo "⚠️  Target locked, kept: $$tmp"; }; \
 				else \
 					if command -v "$$ccbin" >/dev/null 2>&1; then \
-						echo "⚙️ Using CC=$$ccbin"; \
+						echo "⚙️  Using CC=$$ccbin"; \
 						tmp="bin/$(BINARY_NAME)_windows_amd64.exe.new.$$RANDOM"; \
 						env CC="$$ccbin" GOOS=windows GOARCH=amd64 CGO_ENABLED=1 $(GO) build -trimpath $(LDFLAGS) -o "$$tmp" main.go && \
 						{ mv -f "$$tmp" "bin/$(BINARY_NAME)_windows_amd64.exe" 2>/dev/null || \
@@ -122,7 +122,7 @@ buildcross:
 				else \
 					: # macOS host: try system clang \
 					if command -v clang >/dev/null 2>&1; then \
-						echo "⚙️ Using CC=clang"; \
+						echo "⚙️  Using CC=clang"; \
 						env CC=clang GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 $(GO) build -trimpath $(LDFLAGS) -o bin/$(BINARY_NAME)_darwin_amd64; \
 					else \
 						echo "⏭️  Skip darwin/amd64: clang not found"; \

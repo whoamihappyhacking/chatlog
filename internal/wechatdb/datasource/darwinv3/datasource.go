@@ -3,6 +3,7 @@ package darwinv3
 import (
 	"context"
 	"crypto/md5"
+	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"regexp"
@@ -157,6 +158,95 @@ func (ds *DataSource) initMessageDbs() error {
 	}
 	ds.talkerDBMap = talkerDBMap
 	return nil
+}
+
+// IntimacyBase 统计按联系人（非群聊）聚合的亲密度基础数据（darwin v3）
+func (ds *DataSource) IntimacyBase(ctx context.Context) (map[string]*model.IntimacyBase, error) {
+	result := make(map[string]*model.IntimacyBase)
+
+	dbs, err := ds.dbm.GetDBs(Message)
+	if err != nil { return result, nil }
+
+	var maxCT int64
+	type tbl struct{ db *sql.DB; name string }
+	var tables []tbl
+	for _, db := range dbs {
+		rows, err := db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Chat_%'`)
+		if err == nil {
+			for rows.Next() { var name string; if err := rows.Scan(&name); err == nil { tables = append(tables, tbl{db: db, name: name}) } }
+			rows.Close()
+		}
+	}
+	for _, t := range tables { row := t.db.QueryRowContext(ctx, `SELECT MAX(msgCreateTime) FROM `+t.name); var v sql.NullInt64; if err := row.Scan(&v); err == nil && v.Valid && v.Int64 > maxCT { maxCT = v.Int64 } }
+	if maxCT == 0 { return result, nil }
+	since90 := maxCT - 90*86400
+	since7 := maxCT - 7*86400
+
+	for _, t := range tables {
+		// 基础统计：total, sent, recv, min, max；darwin v3: mesDes: 1=接收? 2=发送? 需按现有实现参考：在其它地方通常 IsSender=1 v3 windows；v3 darwin字段不同，这里按 status 字段近似处理：当 mesDes=2 视为发送
+		q := `SELECT COALESCE(n.user_name,''),
+			COUNT(*) AS msg_count,
+			MIN(m.msgCreateTime) AS minct,
+			MAX(m.msgCreateTime) AS maxct,
+			SUM(CASE WHEN m.mesDes=0 THEN 1 ELSE 0 END) AS sent,
+			SUM(CASE WHEN m.mesDes!=0 THEN 1 ELSE 0 END) AS recv
+			FROM ` + t.name + ` m
+			LEFT JOIN Name2Id n ON m.realChatUsrNameId = n.rowid
+			WHERE (n.user_name IS NULL OR n.user_name NOT LIKE '%@chatroom')
+			GROUP BY COALESCE(n.user_name,'')`
+		rows, err := t.db.QueryContext(ctx, q)
+		if err == nil {
+			for rows.Next() {
+				var uname string; var cnt, minct, maxct, sent, recv int64
+				if err := rows.Scan(&uname, &cnt, &minct, &maxct, &sent, &recv); err == nil {
+					if strings.TrimSpace(uname) == "" { continue }
+					base := result[uname]
+					if base == nil { base = &model.IntimacyBase{UserName: uname}; result[uname] = base }
+					base.MsgCount += cnt
+					base.SentCount += sent
+					base.ReceivedCount += recv
+					if base.MinCreateUnix == 0 || (minct > 0 && minct < base.MinCreateUnix) { base.MinCreateUnix = minct }
+					if maxct > base.MaxCreateUnix { base.MaxCreateUnix = maxct }
+				}
+			}
+			rows.Close()
+		}
+
+		// 活跃天数
+		q2 := `SELECT COALESCE(n.user_name,''), COUNT(DISTINCT date(datetime(m.msgCreateTime,'unixepoch'))) AS days
+			FROM ` + t.name + ` m LEFT JOIN Name2Id n ON m.realChatUsrNameId = n.rowid
+			WHERE (n.user_name IS NULL OR n.user_name NOT LIKE '%@chatroom')
+			GROUP BY COALESCE(n.user_name,'')`
+		rows2, err := t.db.QueryContext(ctx, q2)
+		if err == nil {
+			for rows2.Next() { var uname string; var days int64; if err := rows2.Scan(&uname, &days); err == nil { if strings.TrimSpace(uname) == "" { continue }; base := result[uname]; if base == nil { base = &model.IntimacyBase{UserName: uname}; result[uname] = base }; base.MessagingDays += days } }
+			rows2.Close()
+		}
+
+		// 最近90天消息
+		q3 := `SELECT COALESCE(n.user_name,''), COUNT(*)
+			FROM ` + t.name + ` m LEFT JOIN Name2Id n ON m.realChatUsrNameId = n.rowid
+			WHERE m.msgCreateTime>=? AND (n.user_name IS NULL OR n.user_name NOT LIKE '%@chatroom')
+			GROUP BY COALESCE(n.user_name,'')`
+		rows3, err := t.db.QueryContext(ctx, q3, since90)
+		if err == nil {
+			for rows3.Next() { var uname string; var cnt int64; if err := rows3.Scan(&uname, &cnt); err == nil { if strings.TrimSpace(uname) == "" { continue }; base := result[uname]; if base == nil { base = &model.IntimacyBase{UserName: uname}; result[uname] = base }; base.Last90DaysMsg += cnt } }
+			rows3.Close()
+		}
+
+		// 过去7天发送
+		q4 := `SELECT COALESCE(n.user_name,''), SUM(CASE WHEN m.mesDes=0 THEN 1 ELSE 0 END)
+			FROM ` + t.name + ` m LEFT JOIN Name2Id n ON m.realChatUsrNameId = n.rowid
+			WHERE m.msgCreateTime>=? AND (n.user_name IS NULL OR n.user_name NOT LIKE '%@chatroom')
+			GROUP BY COALESCE(n.user_name,'')`
+		rows4, err := t.db.QueryContext(ctx, q4, since7)
+		if err == nil {
+			for rows4.Next() { var uname string; var cnt sql.NullInt64; if err := rows4.Scan(&uname, &cnt); err == nil { if strings.TrimSpace(uname) == "" { continue }; base := result[uname]; if base == nil { base = &model.IntimacyBase{UserName: uname}; result[uname] = base }; if cnt.Valid { base.Past7DaysSentMsg += cnt.Int64 } } }
+			rows4.Close()
+		}
+	}
+
+	return result, nil
 }
 
 func (ds *DataSource) initChatRoomDb() error {
@@ -656,4 +746,298 @@ func (ds *DataSource) Close() error {
 // GetAvatar returns not found for darwin v3 (no head image source known here)
 func (ds *DataSource) GetAvatar(ctx context.Context, username string, size string) (*model.Avatar, error) {
 	return nil, errors.ErrAvatarNotFound
+}
+
+// GlobalMessageStats 聚合统计（Darwin v3）
+func (ds *DataSource) GlobalMessageStats(ctx context.Context) (*model.GlobalMessageStats, error) {
+	stats := &model.GlobalMessageStats{ByType: make(map[string]int64)}
+	// 遍历所有消息库，枚举 Chat_% 表
+	dbs, err := ds.dbm.GetDBs(Message)
+	if err != nil { return stats, nil }
+	for _, db := range dbs {
+		trows, err := db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Chat_%' AND name NOT LIKE '%_dels'`)
+		if err != nil { continue }
+		var tables []string
+		for trows.Next() { var name string; if err := trows.Scan(&name); err == nil { tables = append(tables, name) } }
+		trows.Close()
+		for _, tbl := range tables {
+			q := fmt.Sprintf(`SELECT COUNT(*) AS total,
+				SUM(CASE WHEN mesDes=0 THEN 1 ELSE 0 END) AS sent,
+				MIN(msgCreateTime) AS minct,
+				MAX(msgCreateTime) AS maxct FROM %s`, tbl)
+			row := db.QueryRowContext(ctx, q)
+			var total, sent, minct, maxct int64
+			if err := row.Scan(&total, &sent, &minct, &maxct); err == nil {
+				stats.Total += total
+				stats.Sent += sent
+				stats.Received += (total - sent)
+				if stats.EarliestUnix == 0 || (minct > 0 && minct < stats.EarliestUnix) { stats.EarliestUnix = minct }
+				if maxct > stats.LatestUnix { stats.LatestUnix = maxct }
+			}
+			// by type
+			q2 := fmt.Sprintf(`SELECT messageType, COUNT(*) FROM %s GROUP BY messageType`, tbl)
+			rows, err := db.QueryContext(ctx, q2)
+			if err == nil {
+				for rows.Next() {
+					var t int64; var cnt int64
+					if err := rows.Scan(&t, &cnt); err == nil {
+						label := mapV4TypeToLabel(t) // 复用 v4 的类型映射
+						if label != "" { stats.ByType[label] += cnt }
+					}
+				}
+				rows.Close()
+			}
+		}
+	}
+	return stats, nil
+}
+
+// GroupMessageCounts 统计群聊消息数量（Darwin v3）
+func (ds *DataSource) GroupMessageCounts(ctx context.Context) (map[string]int64, error) {
+	result := make(map[string]int64)
+	// 先获取所有群聊用户名，构建 md5 -> username 映射
+	mapping := make(map[string]string)
+	if cdb, err := ds.dbm.GetDB(ChatRoom); err == nil {
+		rows, err := cdb.QueryContext(ctx, `SELECT IFNULL(m_nsUsrName,"") FROM GroupContact`)
+		if err == nil {
+			for rows.Next() {
+				var uname string
+				if err := rows.Scan(&uname); err == nil && uname != "" {
+					sum := md5.Sum([]byte(uname))
+					mapping["Chat_"+hex.EncodeToString(sum[:])] = uname
+				}
+			}
+			rows.Close()
+		}
+	}
+	// 遍历消息库，按表计数并映射回 username
+	dbs, err := ds.dbm.GetDBs(Message)
+	if err != nil { return result, nil }
+	for _, db := range dbs {
+		trows, err := db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Chat_%' AND name NOT LIKE '%_dels'`)
+		if err != nil { continue }
+		for trows.Next() {
+			var tbl string
+			if err := trows.Scan(&tbl); err != nil { continue }
+			var cnt int64
+			q := fmt.Sprintf(`SELECT COUNT(*) FROM %s`, tbl)
+			if err := db.QueryRowContext(ctx, q).Scan(&cnt); err == nil {
+				key := tbl
+				if uname, ok := mapping[tbl]; ok { key = uname }
+				result[key] += cnt
+			}
+		}
+		trows.Close()
+	}
+	return result, nil
+}
+
+// GroupTodayMessageCounts 统计群聊今日消息数（Darwin v3）：Chat_% 表按 msgCreateTime 过滤 >= 今日零点
+func (ds *DataSource) GroupTodayMessageCounts(ctx context.Context) (map[string]int64, error) {
+	result := make(map[string]int64)
+	// 构建 md5->username 映射（来自 GroupContact）
+	mapping := make(map[string]string)
+	if cdb, err := ds.dbm.GetDB(ChatRoom); err == nil {
+		rows, err := cdb.QueryContext(ctx, `SELECT IFNULL(m_nsUsrName,"") FROM GroupContact`)
+		if err == nil {
+			for rows.Next() {
+				var uname string
+				if err := rows.Scan(&uname); err == nil && uname != "" {
+					sum := md5.Sum([]byte(uname))
+					mapping["Chat_"+hex.EncodeToString(sum[:])] = uname
+				}
+			}
+			rows.Close()
+		}
+	}
+
+	// 今日零点
+	now := time.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	since := today.Unix()
+
+	// 遍历消息库
+	dbs, err := ds.dbm.GetDBs(Message)
+	if err != nil { return result, nil }
+	for _, db := range dbs {
+		trows, err := db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Chat_%' AND name NOT LIKE '%_dels'`)
+		if err != nil { continue }
+		for trows.Next() {
+			var tbl string
+			if err := trows.Scan(&tbl); err != nil { continue }
+			q := fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE msgCreateTime >= ?`, tbl)
+			var cnt int64
+			if err := db.QueryRowContext(ctx, q, since).Scan(&cnt); err == nil {
+				key := tbl
+				if uname, ok := mapping[tbl]; ok { key = uname }
+				result[key] += cnt
+			}
+		}
+		trows.Close()
+	}
+	return result, nil
+}
+
+// GroupWeekMessageCount 统计本周(周一00:00起)所有群聊消息总数（Darwin v3）
+func (ds *DataSource) GroupWeekMessageCount(ctx context.Context) (int64, error) {
+	var total int64
+	// 构建映射便于遍历表名
+	mapping := make(map[string]string)
+	if cdb, err := ds.dbm.GetDB(ChatRoom); err == nil {
+		rows, err := cdb.QueryContext(ctx, `SELECT IFNULL(m_nsUsrName,"") FROM GroupContact`)
+		if err == nil {
+			for rows.Next() {
+				var uname string
+				if rows.Scan(&uname) == nil && uname != "" {
+					sum := md5.Sum([]byte(uname))
+					mapping["Chat_"+hex.EncodeToString(sum[:])] = uname
+				}
+			}
+			rows.Close()
+		}
+	}
+	now := time.Now()
+	wday := int(now.Weekday())
+	offset := wday - 1
+	if wday == 0 { offset = -6 }
+	monday := time.Date(now.Year(), now.Month(), now.Day(), 0,0,0,0, now.Location()).AddDate(0,0,-offset)
+	since := monday.Unix()
+	dbs, err := ds.dbm.GetDBs(Message)
+	if err != nil { return 0, nil }
+	for _, db := range dbs {
+		trows, err := db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Chat_%' AND name NOT LIKE '%_dels'`)
+		if err != nil { continue }
+		for trows.Next() {
+			var tbl string
+			if trows.Scan(&tbl) != nil { continue }
+			q := fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE msgCreateTime >= ?`, tbl)
+			var cnt int64
+			if db.QueryRowContext(ctx, q, since).Scan(&cnt) == nil { total += cnt }
+		}
+		trows.Close()
+	}
+	return total, nil
+}
+
+// MonthlyTrend 返回每月 sent/received
+func (ds *DataSource) MonthlyTrend(ctx context.Context, months int) ([]model.MonthlyTrend, error) {
+	agg := make(map[string][2]int64)
+	dbs, err := ds.dbm.GetDBs(Message)
+	if err != nil { return []model.MonthlyTrend{}, nil }
+	for _, db := range dbs {
+		trows, err := db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Chat_%' AND name NOT LIKE '%_dels'`)
+		if err != nil { continue }
+		var tables []string
+		for trows.Next() { var name string; if err := trows.Scan(&name); err == nil { tables = append(tables, name) } }
+		trows.Close()
+		for _, tbl := range tables {
+			q := fmt.Sprintf(`SELECT strftime('%%Y-%%m', datetime(msgCreateTime, 'unixepoch')) AS ym,
+				SUM(CASE WHEN mesDes=0 THEN 1 ELSE 0 END) AS sent,
+				SUM(CASE WHEN mesDes!=0 THEN 1 ELSE 0 END) AS recv
+				FROM %s GROUP BY ym ORDER BY ym`, tbl)
+			rows, err := db.QueryContext(ctx, q)
+			if err != nil { continue }
+			for rows.Next() {
+				var ym string; var sent, recv int64
+				if err := rows.Scan(&ym, &sent, &recv); err == nil {
+					cur := agg[ym]
+					cur[0] += sent; cur[1] += recv
+					agg[ym] = cur
+				}
+			}
+			rows.Close()
+		}
+	}
+	// 排序输出
+	keys := make([]string, 0, len(agg))
+	for k := range agg { keys = append(keys, k) }
+	sort.Strings(keys)
+	trends := make([]model.MonthlyTrend, 0, len(keys))
+	for _, k := range keys { v := agg[k]; trends = append(trends, model.MonthlyTrend{Date: k, Sent: v[0], Received: v[1]}) }
+	return trends, nil
+}
+
+// Heatmap 小时x星期（wday: 0=Sunday..6）
+func (ds *DataSource) Heatmap(ctx context.Context) ([24][7]int64, error) {
+	var grid [24][7]int64
+	dbs, err := ds.dbm.GetDBs(Message)
+	if err != nil { return grid, nil }
+	for _, db := range dbs {
+		trows, err := db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Chat_%' AND name NOT LIKE '%_dels'`)
+		if err != nil { continue }
+		var tables []string
+		for trows.Next() { var name string; if err := trows.Scan(&name); err == nil { tables = append(tables, name) } }
+		trows.Close()
+		for _, tbl := range tables {
+			q := fmt.Sprintf(`SELECT CAST(strftime('%%H', datetime(msgCreateTime,'unixepoch')) AS INTEGER) AS h,
+				CAST(strftime('%%w', datetime(msgCreateTime,'unixepoch')) AS INTEGER) AS d,
+				COUNT(*) FROM %s GROUP BY h,d`, tbl)
+			rows, err := db.QueryContext(ctx, q)
+			if err != nil { continue }
+			for rows.Next() {
+				var h, d int; var cnt int64
+				if err := rows.Scan(&h, &d, &cnt); err == nil { if h>=0 && h<24 && d>=0 && d<7 { grid[h][d] += cnt } }
+			}
+			rows.Close()
+		}
+	}
+	return grid, nil
+}
+
+// GlobalTodayHourly 返回今日(本地时区)每小时全部消息量（Darwin v3）
+func (ds *DataSource) GlobalTodayHourly(ctx context.Context) ([24]int64, error) {
+	var hours [24]int64
+	dbs, err := ds.dbm.GetDBs(Message)
+	if err != nil { return hours, nil }
+	now := time.Now()
+	start := time.Date(now.Year(), now.Month(), now.Day(), 0,0,0,0, now.Location()).Unix()
+	end := start + 86400
+	for _, db := range dbs {
+		trows, err := db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Chat_%' AND name NOT LIKE '%_dels'`)
+		if err != nil { continue }
+		var tables []string
+		for trows.Next() { var name string; if trows.Scan(&name) == nil { tables = append(tables, name) } }
+		trows.Close()
+		for _, tbl := range tables {
+			q := fmt.Sprintf(`SELECT CAST(strftime('%%H', datetime(msgCreateTime,'unixepoch')) AS INTEGER) AS h, COUNT(*) FROM %s WHERE msgCreateTime >= ? AND msgCreateTime < ? GROUP BY h`, tbl)
+			rows, err := db.QueryContext(ctx, q, start, end)
+			if err != nil { continue }
+			for rows.Next() { var h int; var cnt int64; if rows.Scan(&h,&cnt)==nil { if h>=0 && h<24 { hours[h]+=cnt } } }
+			rows.Close()
+		}
+	}
+	return hours, nil
+}
+
+// 本地定义简易类型映射，复用与 v4 类似的类别
+func mapV4TypeToLabel(t int64) string {
+	// 依据文档统一的消息类型映射
+	switch t {
+	case 1:
+		return "文本消息"
+	case 3:
+		return "图片消息"
+	case 34:
+		return "语音消息"
+	case 37:
+		return "好友验证消息"
+	case 42:
+		return "好友推荐消息"
+	case 47:
+		return "聊天表情"
+	case 48:
+		return "位置消息"
+	case 49:
+		return "XML消息"
+	case 50:
+		return "音视频通话"
+	case 51:
+		return "手机端操作消息"
+	case 10000:
+		return "系统通知"
+	case 10002:
+		return "撤回消息"
+	default:
+		return ""
+	}
 }

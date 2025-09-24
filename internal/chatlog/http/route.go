@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"html/template"
 	"io/fs"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -74,6 +76,7 @@ func (s *Service) initAPIRouter() {
 		api.GET("/session", s.handleSessions)
 		api.GET("/diary", s.handleDiary)
 		api.GET("/summary", s.handleSummary)
+		api.GET("/dashboard", s.handleDashboard)
 	}
 }
 
@@ -243,6 +246,410 @@ func (s *Service) computeDynamicSummary() any {
 	return map[string]any{"dashboard_report": dash}
 }
 
+// handleDashboard 返回真实统计数据的仪表盘 JSON
+// GET /api/v1/dashboard
+func (s *Service) handleDashboard(c *gin.Context) {
+	// 基础聚合
+	gstats, err := s.db.GetDB().GlobalMessageStats()
+	if err != nil { c.JSON(http.StatusInternalServerError, gin.H{"error":"global stats failed", "detail": err.Error()}); return }
+	groupCounts, _ := s.db.GetDB().GroupMessageCounts()
+	trends, _ := s.db.GetDB().MonthlyTrend(0)
+	heat, _ := s.db.GetDB().Heatmap()
+
+	// 文件与目录大小
+	dataDir := s.conf.GetDataDir()
+	workDir := dataDir
+	if s.db != nil { if wd := s.db.GetWorkDir(); wd != "" { workDir = wd } }
+	dirSize := safeDirSize(dataDir)
+	dbSize := estimateDBSize(workDir)
+
+	// 当前账号昵称（overview.user）：从 DataDir 推断账号名（通常为 wxid_***），再从联系人中查询 NickName
+	currentUser := ""
+	accountID := ""
+	if dd := strings.TrimSpace(dataDir); dd != "" {
+		acct := filepath.Base(filepath.Clean(dd))
+		if acct != "" && acct != "." && acct != string(filepath.Separator) {
+			accountID = acct
+			if clist, err := s.db.GetContacts(acct, 0, 0); err == nil && clist != nil {
+				for _, it := range clist.Items {
+					if it != nil && it.UserName == acct {
+						if strings.TrimSpace(it.NickName) != "" { currentUser = it.NickName }
+						break
+					}
+				}
+				// 兜底：若未命中精确用户名，但首项即为精确匹配
+				if currentUser == "" && len(clist.Items) > 0 && clist.Items[0] != nil && clist.Items[0].UserName == acct {
+					currentUser = clist.Items[0].NickName
+				}
+			}
+			// 最终兜底用账号名（wxid）
+			if currentUser == "" { currentUser = acct }
+		}
+	}
+
+	// 联系人统计
+
+	// 群信息（合并消息计数）
+	overviewGroups := make([]map[string]any, 0)
+	activeGroups := 0
+	if rooms, err := s.db.GetChatRooms("", 0, 0); err == nil {
+		for _, r := range rooms.Items {
+			// 跳过没有 NickName 的群
+			if strings.TrimSpace(r.NickName) == "" { continue }
+			mc := groupCounts[r.Name]
+			if mc > 0 { activeGroups++ }
+			overviewGroups = append(overviewGroups, map[string]any{
+				"ChatRoomName":  r.Name,
+				"NickName":      r.NickName,
+				"member_count":  len(r.Users),
+				"message_count": mc,
+			})
+		}
+	}
+
+	// msgTypes 依据最新文档 + 衍生细分（文件消息 / 链接消息）补齐
+	msgTypes := map[string]int64{
+		"文本消息":0,
+		"图片消息":0,
+		"语音消息":0,
+		"好友验证消息":0,
+		"好友推荐消息":0,
+		"聊天表情":0,
+		"位置消息":0,
+		"XML消息":0,      // 未细分的 49 类或其他 XML
+		"文件消息":0,
+		"链接消息":0,
+		"音视频通话":0,
+		"手机端操作消息":0,
+		"系统通知":0,
+		"撤回消息":0,
+	}
+	for k, v := range gstats.ByType { if _, ok := msgTypes[k]; ok { msgTypes[k] += v } }
+
+	// 时间轴
+	durationDays := 0.0
+	if gstats.EarliestUnix > 0 && gstats.LatestUnix >= gstats.EarliestUnix {
+		durationDays = float64(gstats.LatestUnix-gstats.EarliestUnix) / 86400.0
+		durationDays = math.Round(durationDays*100) / 100.0
+	}
+
+	// trends 排序
+	sort.Slice(trends, func(i, j int) bool { return trends[i].Date < trends[j].Date })
+	trendData := make([]map[string]any, 0, len(trends))
+	for _, t := range trends { trendData = append(trendData, map[string]any{"date": t.Date, "sent": t.Sent, "received": t.Received}) }
+
+	// 今日每小时统计用于 most_active_hour
+	perHourTotal := make([]int64, 24)
+	if s.db != nil && s.db.GetDB() != nil {
+		if hours, err := s.db.GetDB().GlobalTodayHourly(); err == nil {
+			for i := 0; i < 24; i++ { perHourTotal[i] = hours[i] }
+		}
+	}
+	maxHour := 0
+	for h := 1; h < 24; h++ { if perHourTotal[h] > perHourTotal[maxHour] { maxHour = h } }
+	mostActiveHour := fmt.Sprintf("%02d:00-%02d:00", maxHour, (maxHour+1)%24)
+
+	// groupAnalysis（基础占位+部分真实值）
+	groupList := make([]map[string]any, 0, len(overviewGroups))
+	for _, g := range overviewGroups {
+		groupList = append(groupList, map[string]any{
+			"name":     g["NickName"],
+			"members":  g["member_count"],
+			"messages": g["message_count"],
+			"active":   (g["message_count"].(int64) > 0),
+		})
+	}
+	hourlyActivity := make([]map[string]any, 0, 24)
+	for h := 0; h < 24; h++ { hourlyActivity = append(hourlyActivity, map[string]any{"hour": fmt.Sprintf("%02d:00", h), "messages": perHourTotal[h]}) }
+	// 内容占比（基于 msgTypes）
+	totalMsgs := gstats.Total
+	pct := func(n int64) float64 { if totalMsgs == 0 { return 0 } ; return math.Round((float64(n)*10000.0/float64(totalMsgs)))/100.0 }
+	// 私聊/群聊分布（用于 DataTypeAnalysis.SourceChannels）
+	var groupTotal int64
+	for _, v := range groupCounts { groupTotal += v }
+	privateTotal := totalMsgs - groupTotal
+
+	// 使用结构体固定 JSON 输出顺序
+	type DBStats struct { DbSizeMB float64 `json:"db_size_mb"`; DirSizeMB float64 `json:"dir_size_mb"` }
+	type MsgStats struct { TotalMsgs int64 `json:"total_msgs"`; SentMsgs int64 `json:"sent_msgs"`; ReceivedMsgs int64 `json:"received_msgs"`; UniqueMsgTypes int `json:"unique_msg_types"` }
+	type OverviewGroup struct { ChatRoomName string `json:"ChatRoomName"`; NickName string `json:"NickName"`; MemberCount int `json:"member_count"`; MessageCount int64 `json:"message_count"` }
+	type Timeline struct { Earliest int64 `json:"earliest_msg_time"`; Latest int64 `json:"latest_msg_time"`; Duration float64 `json:"duration_days"` }
+	type Migration struct { ID int `json:"id"`; File string `json:"file"`; Status string `json:"status"`; CreatedAt string `json:"created_at"` }
+	type Overview struct {
+		User       string                    `json:"user"`
+		DBStats    DBStats                   `json:"dbStats"`
+		MsgStats   MsgStats                  `json:"msgStats"`
+		MsgTypes   map[string]int64          `json:"msgTypes"`
+		Groups     []OverviewGroup           `json:"groups"`
+		Timeline   Timeline                  `json:"timeline"`
+		Migrations []Migration               `json:"migrations"`
+	}
+
+	type TrendPoint struct { Date string `json:"date"`; Sent int64 `json:"sent"`; Received int64 `json:"received"` }
+	type HeatmapRow struct {
+		Hour     int   `json:"hour"`
+		Monday   int64 `json:"monday"`
+		Tuesday  int64 `json:"tuesday"`
+		Wednesday int64 `json:"wednesday"`
+		Thursday int64 `json:"thursday"`
+		Friday   int64 `json:"friday"`
+		Saturday int64 `json:"saturday"`
+		Sunday   int64 `json:"sunday"`
+	}
+
+	type GroupOverview struct {
+		TotalGroups int    `json:"total_groups"`
+		ActiveGroups int   `json:"active_groups"`
+		TodayMessages int  `json:"today_messages"`
+		WeeklyAvg int      `json:"weekly_avg"`
+		MostActiveHour string `json:"most_active_hour"`
+	}
+	type ContentAnalysis struct { Text int64 `json:"text_messages"`; Images int64 `json:"images"`; Voice int64 `json:"voice_messages"`; Files int64 `json:"files"`; Links int64 `json:"links"`; Others int64 `json:"others"` }
+	type GroupListItem struct { Name string `json:"name"`; Members int `json:"members"`; Messages int64 `json:"messages"`; Active bool `json:"active"` }
+	type HourlyActivity struct { Hour string `json:"hour"`; Messages int64 `json:"messages"` }
+	type GroupAnalysis struct {
+		Title string `json:"title"`
+		Overview GroupOverview `json:"overview"`
+		ContentAnalysis ContentAnalysis `json:"content_analysis"`
+		GroupList []GroupListItem `json:"group_list"`
+		HourlyActivity []HourlyActivity `json:"hourly_activity"`
+	}
+	type ContentTypeStats struct { Count int64 `json:"count"`; Percentage float64 `json:"percentage"`; SizeMB float64 `json:"size_mb"`; Trend string `json:"trend"` }
+	type SourceChannel struct { Count int64 `json:"count"`; Percentage float64 `json:"percentage"`; AvgSize float64 `json:"avg_size"`; Growth string `json:"growth"` }
+	type ProcessingStatus struct { Processed float64 `json:"processed"`; Processing float64 `json:"processing"`; Pending float64 `json:"pending"` }
+	type QualityMetrics struct { DataIntegrity float64 `json:"data_integrity"`; ClassificationAccuracy float64 `json:"classification_accuracy"`; DuplicateRate float64 `json:"duplicate_rate"`; ErrorRate float64 `json:"error_rate"` }
+	type DataTypeAnalysis struct {
+		Title string `json:"title"`
+		ContentTypes map[string]ContentTypeStats `json:"content_types"`
+		SourceChannels map[string]SourceChannel `json:"source_channels"`
+		ProcessingStatus ProcessingStatus `json:"processing_status"`
+		QualityMetrics QualityMetrics `json:"quality_metrics"`
+	}
+	type Visualization struct {
+		TrendData []TrendPoint `json:"trendData"`
+		HeatmapData []HeatmapRow `json:"heatmapData"`
+		GroupAnalysis GroupAnalysis `json:"groupAnalysis"`
+		DataTypeAnalysis DataTypeAnalysis `json:"dataTypeAnalysis"`
+	}
+	type Network struct { Nodes []any `json:"nodes"`; Links []any `json:"links"` }
+	type Dashboard struct { Overview Overview `json:"overview"`; Visualization Visualization `json:"visualization"`; Network Network `json:"network"` }
+
+	ogroups := make([]OverviewGroup, 0, len(overviewGroups))
+	for _, g := range overviewGroups {
+		ogroups = append(ogroups, OverviewGroup{
+			ChatRoomName: g["ChatRoomName"].(string),
+			NickName:     g["NickName"].(string),
+			MemberCount:  g["member_count"].(int),
+			MessageCount: g["message_count"].(int64),
+		})
+	}
+	tpoints := make([]TrendPoint, 0, len(trendData))
+	for _, t := range trendData { tpoints = append(tpoints, TrendPoint{ Date: t["date"].(string), Sent: t["sent"].(int64), Received: t["received"].(int64) }) }
+	hrows := make([]HeatmapRow, 0, 24)
+	for h := 0; h < 24; h++ {
+		hrows = append(hrows, HeatmapRow{
+			Hour: h,
+			Monday: heat[h][1],
+			Tuesday: heat[h][2],
+			Wednesday: heat[h][3],
+			Thursday: heat[h][4],
+			Friday: heat[h][5],
+			Saturday: heat[h][6],
+			Sunday: heat[h][0],
+		})
+	}
+	// group list typed
+	glist := make([]GroupListItem, 0, len(groupList))
+	for _, it := range groupList {
+		glist = append(glist, GroupListItem{
+			Name: it["name"].(string),
+			Members: it["members"].(int),
+			Messages: it["messages"].(int64),
+			Active: it["active"].(bool),
+		})
+	}
+	// hourly activity typed
+	hacts := make([]HourlyActivity, 0, len(hourlyActivity))
+	for _, it := range hourlyActivity {
+		hacts = append(hacts, HourlyActivity{ Hour: it["hour"].(string), Messages: it["messages"].(int64) })
+	}
+
+	// ====== 今日群聊消息数统计 ======
+	todayMessages := int64(0)
+	if s.db != nil && s.db.GetDB() != nil {
+		if todayCounts, err := s.db.GetDB().GroupTodayMessageCounts(); err == nil {
+			for _, v := range todayCounts {
+				todayMessages += v
+			}
+		}
+	}
+
+
+	// ====== 本周群聊平均每天消息数 ======
+	weeklyAvg := 0
+	if s.db != nil && s.db.GetDB() != nil {
+		if weekTotal, err := s.db.GetDB().GroupWeekMessageCount(); err == nil && weekTotal > 0 {
+			// 计算已过天数：周一=1, 周二=2 ... 周六=6, 周日=7（显示完整7天平均）
+			now := time.Now()
+			wday := int(now.Weekday()) // Sunday=0
+			passed := 0
+			if wday == 0 { // Sunday
+				passed = 7
+			} else {
+				passed = wday
+			}
+			if passed <= 0 { passed = 1 }
+			avg := float64(weekTotal) / float64(passed)
+			weeklyAvg = int(math.Round(avg))
+		}
+	}
+
+	vis := Visualization{
+		TrendData: tpoints,
+		HeatmapData: hrows,
+		GroupAnalysis: GroupAnalysis{
+			Title: "群聊分析",
+			Overview: GroupOverview{ TotalGroups: len(overviewGroups), ActiveGroups: activeGroups, TodayMessages: int(todayMessages), WeeklyAvg: weeklyAvg, MostActiveHour: mostActiveHour },
+			// 扩展：增加 links 字段（结构体需更新）
+			ContentAnalysis: ContentAnalysis{ Text: msgTypes["文本消息"], Images: msgTypes["图片消息"], Voice: msgTypes["语音消息"], Files: msgTypes["文件消息"], Links: msgTypes["链接消息"], Others: totalMsgs - (msgTypes["文本消息"]+msgTypes["图片消息"]+msgTypes["语音消息"]+msgTypes["文件消息"]+msgTypes["链接消息"]) },
+			GroupList: glist,
+			HourlyActivity: hacts,
+		},
+		DataTypeAnalysis: DataTypeAnalysis{
+			Title: "数据类型统计",
+			ContentTypes: map[string]ContentTypeStats{
+				"文本消息":   { Count: msgTypes["文本消息"], Percentage: pct(msgTypes["文本消息"]), SizeMB: 0, Trend: "" },
+				"图片消息":   { Count: msgTypes["图片消息"], Percentage: pct(msgTypes["图片消息"]), SizeMB: 0, Trend: "" },
+				"语音消息":   { Count: msgTypes["语音消息"], Percentage: pct(msgTypes["语音消息"]), SizeMB: 0, Trend: "" },
+				"文件消息":   { Count: msgTypes["文件消息"], Percentage: pct(msgTypes["文件消息"]), SizeMB: 0, Trend: "" },
+				"链接消息":   { Count: msgTypes["链接消息"], Percentage: pct(msgTypes["链接消息"]), SizeMB: 0, Trend: "" },
+				"XML消息":   { Count: msgTypes["XML消息"], Percentage: pct(msgTypes["XML消息"]), SizeMB: 0, Trend: "" },
+				"好友验证消息": { Count: msgTypes["好友验证消息"], Percentage: pct(msgTypes["好友验证消息"]), SizeMB: 0, Trend: "" },
+				"好友推荐消息": { Count: msgTypes["好友推荐消息"], Percentage: pct(msgTypes["好友推荐消息"]), SizeMB: 0, Trend: "" },
+				"聊天表情":   { Count: msgTypes["聊天表情"], Percentage: pct(msgTypes["聊天表情"]), SizeMB: 0, Trend: "" },
+				"位置消息":   { Count: msgTypes["位置消息"], Percentage: pct(msgTypes["位置消息"]), SizeMB: 0, Trend: "" },
+				"音视频通话": { Count: msgTypes["音视频通话"], Percentage: pct(msgTypes["音视频通话"]), SizeMB: 0, Trend: "" },
+				"手机端操作消息": { Count: msgTypes["手机端操作消息"], Percentage: pct(msgTypes["手机端操作消息"]), SizeMB: 0, Trend: "" },
+				"系统通知":   { Count: msgTypes["系统通知"], Percentage: pct(msgTypes["系统通知"]), SizeMB: 0, Trend: "" },
+				"撤回消息":   { Count: msgTypes["撤回消息"], Percentage: pct(msgTypes["撤回消息"]), SizeMB: 0, Trend: "" },
+			},
+			SourceChannels: map[string]SourceChannel{
+				"私聊数据": { Count: privateTotal, Percentage: pct(privateTotal), AvgSize: 0, Growth: "" },
+				"群聊数据": { Count: groupTotal,   Percentage: pct(groupTotal),   AvgSize: 0, Growth: "" },
+			},
+			ProcessingStatus: ProcessingStatus{ Processed: 100, Processing: 0, Pending: 0 },
+			QualityMetrics: QualityMetrics{ DataIntegrity: 0, ClassificationAccuracy: 0, DuplicateRate: 0, ErrorRate: 0 },
+		},
+	}
+
+	// ===== Network（亲密度）=====
+	// 获取基础亲密度数据
+	netNodes := make([]any, 0)
+	netLinks := make([]any, 0)
+	if s.db != nil && s.db.GetDB() != nil {
+		if ibase, err := s.db.GetDB().IntimacyBase(); err == nil && len(ibase) > 0 {
+			// 忽略的系统/服务账号
+			skipIDs := map[string]struct{}{
+				"filehelper":   {},
+				"weixin":       {},
+				"notifymessage":{},
+				"fmessage":     {},
+			}
+			// 取联系人信息用于展示名称与头像
+			contactMap := map[string]*model.Contact{}
+			if clist, err := s.db.GetContacts("", 0, 0); err == nil && clist != nil {
+				for _, ct := range clist.Items { if ct != nil { contactMap[ct.UserName] = ct } }
+			}
+			// 排序：按最近90天消息数、总消息数、过去7天发送数综合排序
+			type pair struct{ k string; v *model.IntimacyBase }
+			arr := make([]pair, 0, len(ibase))
+			for k, v := range ibase { arr = append(arr, pair{k, v}) }
+			sort.Slice(arr, func(i, j int) bool {
+				ai, aj := arr[i].v, arr[j].v
+				if ai.Last90DaysMsg != aj.Last90DaysMsg { return ai.Last90DaysMsg > aj.Last90DaysMsg }
+				if ai.MsgCount != aj.MsgCount { return ai.MsgCount > aj.MsgCount }
+				return ai.Past7DaysSentMsg > aj.Past7DaysSentMsg
+			})
+			// 只取前 N 个以避免图过大
+			maxN := 100
+			if len(arr) < maxN { maxN = len(arr) }
+			// 计算有效最大分（排除自身与忽略账号）用于归一化
+			effMax := 0.0
+			for i := 0; i < len(arr); i++ {
+				k := arr[i].k; v := arr[i].v
+				if accountID != "" && k == accountID { continue }
+				if _, skip := skipIDs[k]; skip { continue }
+				raw := float64(v.Last90DaysMsg)*0.6 + float64(v.MsgCount)*0.3 + float64(v.Past7DaysSentMsg)*0.1
+				if raw > effMax { effMax = raw }
+			}
+			// 节点构造
+			added := 0
+			for idx := 0; idx < len(arr) && added < maxN; idx++ {
+				k := arr[idx].k; v := arr[idx].v
+				// 过滤自身账户
+				if accountID != "" && k == accountID { continue }
+				if _, skip := skipIDs[k]; skip { continue }
+				ct := contactMap[k]
+				display := k
+				remark := ""
+				if ct != nil {
+					if strings.TrimSpace(ct.Remark) != "" { display = ct.Remark } else if strings.TrimSpace(ct.NickName) != "" { display = ct.NickName }
+					remark = ct.Remark
+				}
+				size := v.MsgCount
+				if size < 1 { size = 1 }
+				// 简单亲密度评分：最近90天权重大 + 历史总量 + 过去7天发送
+				rawScore := float64(v.Last90DaysMsg)*0.6 + float64(v.MsgCount)*0.3 + float64(v.Past7DaysSentMsg)*0.1
+				// 归一化（0..1）与 0..100
+				norm := 0.0
+				if effMax > 0 { norm = rawScore / effMax }
+				if norm > 1 { norm = 1 }
+				intimacy := math.Round(norm*100)
+				node := map[string]any{
+					"id": k,
+					"name": display,
+					"type": "contact",
+					"size": size,
+					"messages": v.MsgCount,
+					"avatar": s.composeAvatarURL(k),
+					"intimacy": int(intimacy),
+					"wechatId": k,
+					"remark": remark,
+				}
+				netNodes = append(netNodes, node)
+				// 与当前用户连边
+				strength := math.Round(norm*1000) / 1000 // 保留三位小数
+				netLinks = append(netLinks, map[string]any{"source":"user", "target": k, "strength": strength})
+				added++
+			}
+		}
+	}
+
+	resp := Dashboard{
+		Overview: Overview{
+			User: currentUser,
+			DBStats: DBStats{ DbSizeMB: roundMB(dbSize), DirSizeMB: roundMB(dirSize) },
+			MsgStats: MsgStats{ TotalMsgs: gstats.Total, SentMsgs: gstats.Sent, ReceivedMsgs: gstats.Received, UniqueMsgTypes: len(gstats.ByType) },
+			MsgTypes: msgTypes,
+			Groups: ogroups,
+			Timeline: Timeline{ Earliest: gstats.EarliestUnix, Latest: gstats.LatestUnix, Duration: durationDays },
+			Migrations: []Migration{},
+		},
+		Visualization: vis,
+		Network: Network{ Nodes: netNodes, Links: netLinks },
+	}
+
+	if c.Query("download") == "1" {
+		b, err := json.MarshalIndent(resp, "", "  ")
+		if err != nil { c.JSON(http.StatusInternalServerError, gin.H{"error":"marshal failed", "detail": err.Error()}); return }
+		c.Header("Content-Type", "application/json")
+		c.Header("Content-Disposition", "attachment; filename=dashboard.json")
+		c.Data(http.StatusOK, "application/json", b)
+		return
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
 func roundMB(bytes int64) float64 {
 	if bytes <= 0 { return 0 }
 	// 1 MB = 1024*1024
@@ -340,7 +747,7 @@ func (s *Service) handleChatlog(c *gin.Context) {
 							if m.IsSelf { senderDisplay = "我" }
 							if m.SenderName != "" { senderDisplay = template.HTMLEscapeString(m.SenderName) + "(" + template.HTMLEscapeString(senderDisplay) + ")" } else { senderDisplay = template.HTMLEscapeString(senderDisplay) }
 							aurl := template.HTMLEscapeString(s.composeAvatarURL(m.Sender) + "?size=big")
-							c.Writer.WriteString("<div class=\"msg\"><div class=\"msg-row\"><img class=\"avatar\" src=\"" + aurl + "\" loading=\"lazy\" alt=\"avatar\" onerror=\"this.style.visibility='hidden'\"/><div class=\"msg-content\"><div class=\"meta\"><span class=\"sender\">"+ senderDisplay +"</span><span class=\"time\">"+ m.Time.Format("2006-01-02 15:04:05") +"</span></div><pre>"+ messageHTMLPlaceholder(m) +"</pre></div></div></div>")
+							c.Writer.WriteString("<div class=\"msg\"><div class=\"msg-row\"><img class=\"avatar\" src=\"" + aurl + "\" loading=\"lazy\" alt=\"avatar\" onerror=\"this.style.visibility='hidden'\"/><div class=\"msg-content\"><div class=\"meta\"><span class=\"sender>"+ senderDisplay +"</span><span class=\"time\">"+ m.Time.Format("2006-01-02 15:04:05") +"</span></div><pre>"+ messageHTMLPlaceholder(m) +"</pre></div></div></div>")
 						}
 						c.Writer.WriteString("</details>")
 					}
@@ -438,6 +845,8 @@ func (s *Service) handleContacts(c *gin.Context) {
 		errors.Err(c, err)
 		return
 	}
+	// 关键字去空白；空关键字表示返回全部
+	q.Keyword = strings.TrimSpace(q.Keyword)
 
 	list, err := s.db.GetContacts(q.Keyword, q.Limit, q.Offset)
 	if err != nil {
@@ -542,6 +951,8 @@ func (s *Service) handleChatRooms(c *gin.Context) {
 		errors.Err(c, err)
 		return
 	}
+	// 关键字去空白；空关键字表示返回全部
+	q.Keyword = strings.TrimSpace(q.Keyword)
 
 	list, err := s.db.GetChatRooms(q.Keyword, q.Limit, q.Offset)
 	if err != nil {

@@ -33,6 +33,25 @@ type DataSource interface {
 	// 头像
 	GetAvatar(ctx context.Context, username string, size string) (*model.Avatar, error)
 
+	// 统计聚合（避免逐条扫描）：
+	// 全局消息统计：总数、发送/接收、最早/最晚、按(Type,SubType)计数
+	GlobalMessageStats(ctx context.Context) (*model.GlobalMessageStats, error)
+	// 群聊消息计数：返回 talker(群名) -> count
+	GroupMessageCounts(ctx context.Context) (map[string]int64, error)
+	// 群聊今日消息计数：返回 talker(群名) -> today_count
+	GroupTodayMessageCounts(ctx context.Context) (map[string]int64, error)
+	// 本周(从周一00:00起)群聊消息总数（所有群合计）
+	GroupWeekMessageCount(ctx context.Context) (int64, error)
+	// 月度趋势（YYYY-MM）：sent/received
+	MonthlyTrend(ctx context.Context, months int) ([]model.MonthlyTrend, error)
+	// 热力图（小时x星期）：返回 [24][7] 计数（wday: 0=Sunday .. 6=Saturday）
+	Heatmap(ctx context.Context) ([24][7]int64, error)
+	// 今日按小时聚合（00:00 起），返回 [24] 计数
+	GlobalTodayHourly(ctx context.Context) ([24]int64, error)
+
+	// 亲密度基础统计（按联系人/会话聚合）
+	IntimacyBase(ctx context.Context) (map[string]*model.IntimacyBase, error)
+
 	// 设置回调函数
 	SetCallback(group string, callback func(event fsnotify.Event) error) error
 

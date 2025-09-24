@@ -114,3 +114,42 @@ func (r *Repository) Close() error {
 func (r *Repository) GetAvatar(ctx context.Context, username string, size string) (*model.Avatar, error) {
 	return r.ds.GetAvatar(ctx, username, size)
 }
+
+// Stats proxies
+func (r *Repository) GlobalMessageStats(ctx context.Context) (*model.GlobalMessageStats, error) {
+	return r.ds.GlobalMessageStats(ctx)
+}
+func (r *Repository) GroupMessageCounts(ctx context.Context) (map[string]int64, error) {
+	return r.ds.GroupMessageCounts(ctx)
+}
+func (r *Repository) MonthlyTrend(ctx context.Context, months int) ([]model.MonthlyTrend, error) {
+	return r.ds.MonthlyTrend(ctx, months)
+}
+func (r *Repository) Heatmap(ctx context.Context) ([24][7]int64, error) {
+	return r.ds.Heatmap(ctx)
+}
+
+func (r *Repository) GlobalTodayHourly(ctx context.Context) ([24]int64, error) {
+	if ds, ok := r.ds.(interface{ GlobalTodayHourly(context.Context) ([24]int64, error) }); ok {
+		return ds.GlobalTodayHourly(ctx)
+	}
+	return [24]int64{}, nil
+}
+
+// IntimacyBase proxies
+func (r *Repository) IntimacyBase(ctx context.Context) (map[string]*model.IntimacyBase, error) {
+	return r.ds.IntimacyBase(ctx)
+}
+func (r *Repository) GroupTodayMessageCounts(ctx context.Context) (map[string]int64, error) {
+	if ds, ok := r.ds.(interface{ GroupTodayMessageCounts(context.Context) (map[string]int64, error) }); ok {
+		return ds.GroupTodayMessageCounts(ctx)
+	}
+	return map[string]int64{}, nil
+}
+
+func (r *Repository) GroupWeekMessageCount(ctx context.Context) (int64, error) {
+    if ds, ok := r.ds.(interface{ GroupWeekMessageCount(context.Context) (int64, error) }); ok {
+        return ds.GroupWeekMessageCount(ctx)
+    }
+    return 0, nil
+}

@@ -2,6 +2,7 @@ package windowsv3
 
 import (
 	"context"
+	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"regexp"
@@ -803,4 +804,303 @@ func (ds *DataSource) GetAvatar(ctx context.Context, username string, size strin
 		return nil, errors.ErrAvatarNotFound
 	}
 	return &model.Avatar{Username: username, URL: url}, nil
+}
+
+// GlobalMessageStats 聚合统计（Windows v3）
+func (ds *DataSource) GlobalMessageStats(ctx context.Context) (*model.GlobalMessageStats, error) {
+	stats := &model.GlobalMessageStats{ByType: make(map[string]int64)}
+	dbs, err := ds.dbm.GetDBs(Message)
+	if err != nil { return stats, nil }
+	for _, db := range dbs {
+		// total/sent/recv/min/max
+		row := db.QueryRowContext(ctx, `SELECT 
+			COUNT(*) AS total,
+			SUM(CASE WHEN IsSender=1 THEN 1 ELSE 0 END) AS sent,
+			SUM(CASE WHEN IsSender=0 THEN 1 ELSE 0 END) AS recv,
+			MIN(CreateTime) AS minct,
+			MAX(CreateTime) AS maxct
+		FROM MSG`)
+		var total, sent, recv, minct, maxct int64
+		if err := row.Scan(&total, &sent, &recv, &minct, &maxct); err == nil {
+			stats.Total += total
+			stats.Sent += sent
+			stats.Received += recv
+			if stats.EarliestUnix == 0 || (minct > 0 && minct < stats.EarliestUnix) { stats.EarliestUnix = minct }
+			if maxct > stats.LatestUnix { stats.LatestUnix = maxct }
+		}
+
+		// By type/subtype
+		rows, err := db.QueryContext(ctx, `SELECT Type, SubType, COUNT(*) FROM MSG GROUP BY Type, SubType`)
+		if err == nil {
+			for rows.Next() {
+				var t int64; var st int; var cnt int64
+				if err := rows.Scan(&t, &st, &cnt); err == nil {
+					label := mapV3TypeToLabel(t, int64(st))
+					if label != "" { stats.ByType[label] += cnt }
+				}
+			}
+			rows.Close()
+		}
+	}
+	return stats, nil
+}
+
+// GroupMessageCounts 统计群聊消息数量（Windows v3）
+func (ds *DataSource) GroupMessageCounts(ctx context.Context) (map[string]int64, error) {
+	result := make(map[string]int64)
+	dbs, err := ds.dbm.GetDBs(Message)
+	if err != nil { return result, nil }
+	for _, db := range dbs {
+		rows, err := db.QueryContext(ctx, `SELECT StrTalker, COUNT(*) FROM MSG WHERE StrTalker LIKE '%@chatroom' GROUP BY StrTalker`)
+		if err != nil { continue }
+		for rows.Next() {
+			var talker string; var cnt int64
+			if err := rows.Scan(&talker, &cnt); err == nil { result[talker] += cnt }
+		}
+		rows.Close()
+	}
+	return result, nil
+}
+
+// GroupTodayMessageCounts 统计群聊今日消息数（Windows v3）：MSG 表中 StrTalker LIKE '%@chatroom' 且 CreateTime >= 今日零点
+func (ds *DataSource) GroupTodayMessageCounts(ctx context.Context) (map[string]int64, error) {
+	result := make(map[string]int64)
+	dbs, err := ds.dbm.GetDBs(Message)
+	if err != nil { return result, nil }
+	// 今日零点（使用本地时区）
+	now := time.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	since := today.Unix()
+	for _, db := range dbs {
+		rows, err := db.QueryContext(ctx, `SELECT StrTalker, COUNT(*) FROM MSG WHERE StrTalker LIKE '%@chatroom' AND CreateTime >= ? GROUP BY StrTalker`, since)
+		if err != nil { continue }
+		for rows.Next() {
+			var talker string; var cnt int64
+			if err := rows.Scan(&talker, &cnt); err == nil { result[talker] += cnt }
+		}
+		rows.Close()
+	}
+	return result, nil
+}
+
+// GroupWeekMessageCount 统计本周(周一00:00起)所有群聊消息总数（Windows v3）
+func (ds *DataSource) GroupWeekMessageCount(ctx context.Context) (int64, error) {
+	var total int64
+	dbs, err := ds.dbm.GetDBs(Message)
+	if err != nil { return 0, nil }
+	now := time.Now()
+	wday := int(now.Weekday())
+	offset := wday - 1
+	if wday == 0 { offset = -6 }
+	monday := time.Date(now.Year(), now.Month(), now.Day(), 0,0,0,0, now.Location()).AddDate(0,0,-offset)
+	since := monday.Unix()
+	for _, db := range dbs {
+		row := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM MSG WHERE StrTalker LIKE '%@chatroom' AND CreateTime >= ?`, since)
+		var cnt int64
+		if row.Scan(&cnt) == nil { total += cnt }
+	}
+	return total, nil
+}
+
+// MonthlyTrend 返回每月 sent/received（近 months 月，若 months<=0 则返回全部）
+func (ds *DataSource) MonthlyTrend(ctx context.Context, months int) ([]model.MonthlyTrend, error) {
+	agg := make(map[string][2]int64)
+	dbs, err := ds.dbm.GetDBs(Message)
+	if err != nil { return []model.MonthlyTrend{}, nil }
+	for _, db := range dbs {
+		rows, err := db.QueryContext(ctx, `SELECT strftime('%Y-%m', datetime(CreateTime, 'unixepoch')) AS ym,
+			SUM(CASE WHEN IsSender=1 THEN 1 ELSE 0 END) AS sent,
+			SUM(CASE WHEN IsSender=0 THEN 1 ELSE 0 END) AS recv
+			FROM MSG GROUP BY ym ORDER BY ym`)
+		if err != nil { continue }
+		for rows.Next() {
+			var ym string; var sent, recv int64
+			if err := rows.Scan(&ym, &sent, &recv); err == nil {
+				cur := agg[ym]
+				cur[0] += sent; cur[1] += recv
+				agg[ym] = cur
+			}
+		}
+		rows.Close()
+	}
+	trends := make([]model.MonthlyTrend, 0, len(agg))
+	// order is not guaranteed; we'll reconstruct sorted keys
+	// but to keep simple, iterate map and collect; sorting can be added later
+	for ym, v := range agg {
+		trends = append(trends, model.MonthlyTrend{Date: ym, Sent: v[0], Received: v[1]})
+	}
+	// optional: limit to recent months by trimming after sort
+	return trends, nil
+}
+
+// Heatmap 小时x星期（wday: 0=Sunday..6）
+func (ds *DataSource) Heatmap(ctx context.Context) ([24][7]int64, error) {
+	var grid [24][7]int64
+	dbs, err := ds.dbm.GetDBs(Message)
+	if err != nil { return grid, nil }
+	for _, db := range dbs {
+		rows, err := db.QueryContext(ctx, `SELECT CAST(strftime('%H', datetime(CreateTime,'unixepoch')) AS INTEGER) AS h,
+			CAST(strftime('%w', datetime(CreateTime,'unixepoch')) AS INTEGER) AS d,
+			COUNT(*) FROM MSG GROUP BY h,d`)
+		if err != nil { continue }
+		for rows.Next() {
+			var h, d int; var cnt int64
+			if err := rows.Scan(&h, &d, &cnt); err == nil {
+				if h>=0 && h<24 && d>=0 && d<7 { grid[h][d] += cnt }
+			}
+		}
+		rows.Close()
+	}
+	return grid, nil
+}
+
+// GlobalTodayHourly 返回今日(本地时区)每小时全部消息量（含私聊+群聊）
+func (ds *DataSource) GlobalTodayHourly(ctx context.Context) ([24]int64, error) {
+	var hours [24]int64
+	dbs, err := ds.dbm.GetDBs(Message)
+	if err != nil { return hours, nil }
+	now := time.Now()
+	start := time.Date(now.Year(), now.Month(), now.Day(), 0,0,0,0, now.Location()).Unix()
+	end := start + 86400
+	for _, db := range dbs {
+		rows, err := db.QueryContext(ctx, `SELECT CAST(strftime('%H', datetime(CreateTime,'unixepoch')) AS INTEGER) AS h, COUNT(*) FROM MSG WHERE CreateTime >= ? AND CreateTime < ? GROUP BY h`, start, end)
+		if err != nil { continue }
+		for rows.Next() {
+			var h int; var cnt int64
+			if rows.Scan(&h, &cnt) == nil {
+				if h>=0 && h<24 { hours[h] += cnt }
+			}
+		}
+		rows.Close()
+	}
+	return hours, nil
+}
+
+// IntimacyBase 统计按联系人（非群聊）聚合的亲密度基础数据（Windows v3）
+func (ds *DataSource) IntimacyBase(ctx context.Context) (map[string]*model.IntimacyBase, error) {
+	result := make(map[string]*model.IntimacyBase)
+
+	dbs, err := ds.dbm.GetDBs(Message)
+	if err != nil { return result, nil }
+
+	// 先获取全局最新时间戳
+	var maxCT int64
+	for _, db := range dbs {
+		row := db.QueryRowContext(ctx, `SELECT MAX(CreateTime) FROM MSG`)
+		var v sql.NullInt64
+		if err := row.Scan(&v); err == nil && v.Valid && v.Int64 > maxCT { maxCT = v.Int64 }
+	}
+	if maxCT == 0 { return result, nil }
+	since90 := maxCT - 90*86400
+	since7 := maxCT - 7*86400
+
+	for _, db := range dbs {
+		// 基础计数
+		rows, err := db.QueryContext(ctx, `SELECT StrTalker,
+			COUNT(*) AS msg_count,
+			MIN(CreateTime) AS minct,
+			MAX(CreateTime) AS maxct,
+			SUM(CASE WHEN IsSender=1 THEN 1 ELSE 0 END) AS sent,
+			SUM(CASE WHEN IsSender=0 THEN 1 ELSE 0 END) AS recv
+			FROM MSG WHERE StrTalker NOT LIKE '%@chatroom' GROUP BY StrTalker`)
+		if err == nil {
+			for rows.Next() {
+				var talker string; var msgCnt, minct, maxct, sent, recv int64
+				if err := rows.Scan(&talker, &msgCnt, &minct, &maxct, &sent, &recv); err == nil {
+					base := result[talker]
+					if base == nil { base = &model.IntimacyBase{UserName: talker}; result[talker] = base }
+					base.MsgCount += msgCnt
+					base.SentCount += sent
+					base.ReceivedCount += recv
+					if base.MinCreateUnix == 0 || (minct > 0 && minct < base.MinCreateUnix) { base.MinCreateUnix = minct }
+					if maxct > base.MaxCreateUnix { base.MaxCreateUnix = maxct }
+				}
+			}
+			rows.Close()
+		}
+
+		// 活跃天数（全期间）
+		rows2, err := db.QueryContext(ctx, `SELECT StrTalker, COUNT(DISTINCT date(datetime(CreateTime,'unixepoch'))) AS days
+			FROM MSG WHERE StrTalker NOT LIKE '%@chatroom' GROUP BY StrTalker`)
+		if err == nil {
+			for rows2.Next() {
+				var talker string; var days int64
+				if err := rows2.Scan(&talker, &days); err == nil {
+					base := result[talker]
+					if base == nil { base = &model.IntimacyBase{UserName: talker}; result[talker] = base }
+					base.MessagingDays += days
+				}
+			}
+			rows2.Close()
+		}
+
+		// 最近90天消息数
+		rows3, err := db.QueryContext(ctx, `SELECT StrTalker, COUNT(*) FROM MSG WHERE CreateTime>=? AND StrTalker NOT LIKE '%@chatroom' GROUP BY StrTalker`, since90)
+		if err == nil {
+			for rows3.Next() {
+				var talker string; var cnt int64
+				if err := rows3.Scan(&talker, &cnt); err == nil {
+					base := result[talker]
+					if base == nil { base = &model.IntimacyBase{UserName: talker}; result[talker] = base }
+					base.Last90DaysMsg += cnt
+				}
+			}
+			rows3.Close()
+		}
+
+		// 过去7天发送数
+		rows4, err := db.QueryContext(ctx, `SELECT StrTalker, SUM(CASE WHEN IsSender=1 THEN 1 ELSE 0 END) FROM MSG WHERE CreateTime>=? AND StrTalker NOT LIKE '%@chatroom' GROUP BY StrTalker`, since7)
+		if err == nil {
+			for rows4.Next() {
+				var talker string; var cnt sql.NullInt64
+				if err := rows4.Scan(&talker, &cnt); err == nil {
+					base := result[talker]
+					if base == nil { base = &model.IntimacyBase{UserName: talker}; result[talker] = base }
+					if cnt.Valid { base.Past7DaysSentMsg += cnt.Int64 }
+				}
+			}
+			rows4.Close()
+		}
+	}
+
+	return result, nil
+}
+
+// mapV3TypeToLabel 将v3 (Type,SubType) 映射为中文类别
+func mapV3TypeToLabel(t int64, st int64) string {
+	// Windows v3：在统一文档分类基础上补充文件/链接细分（Type=49 根据 SubType 区分）
+	switch t {
+	case 1:
+		return "文本消息"
+	case 3:
+		return "图片消息"
+	case 34:
+		return "语音消息"
+	case 37:
+		return "好友验证消息"
+	case 42:
+		return "好友推荐消息"
+	case 47:
+		return "聊天表情"
+	case 48:
+		return "位置消息"
+	case 49:
+		if st == 6 { // 文件
+			return "文件消息"
+		}
+		if st == 4 || st == 5 { // 链接
+			return "链接消息"
+		}
+		return "XML消息" // 其他未识别子类型归类为通用 XML
+	case 50:
+		return "音视频通话"
+	case 51:
+		return "手机端操作消息"
+	case 10000:
+		return "系统通知"
+	case 10002:
+		return "撤回消息"
+	default:
+		return ""
+	}
 }

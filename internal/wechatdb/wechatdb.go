@@ -133,3 +133,33 @@ func (w *DB) SetCallback(group string, callback func(event fsnotify.Event) error
 func (w *DB) GetAvatar(username string, size string) (*model.Avatar, error) {
 	return w.repo.GetAvatar(context.Background(), username, size)
 }
+
+// Stats exposure
+func (w *DB) GlobalMessageStats() (*model.GlobalMessageStats, error) {
+	return w.repo.GlobalMessageStats(context.Background())
+}
+func (w *DB) GroupMessageCounts() (map[string]int64, error) {
+	return w.repo.GroupMessageCounts(context.Background())
+}
+func (w *DB) MonthlyTrend(months int) ([]model.MonthlyTrend, error) {
+	return w.repo.MonthlyTrend(context.Background(), months)
+}
+func (w *DB) Heatmap() ([24][7]int64, error) {
+	return w.repo.Heatmap(context.Background())
+}
+
+func (w *DB) GlobalTodayHourly() ([24]int64, error) {
+    return w.repo.GlobalTodayHourly(context.Background())
+}
+
+func (w *DB) IntimacyBase() (map[string]*model.IntimacyBase, error) {
+	return w.repo.IntimacyBase(context.Background())
+}
+
+func (w *DB) GroupTodayMessageCounts() (map[string]int64, error) {
+	return w.repo.GroupTodayMessageCounts(context.Background())
+}
+
+func (w *DB) GroupWeekMessageCount() (int64, error) {
+    return w.repo.GroupWeekMessageCount(context.Background())
+}
