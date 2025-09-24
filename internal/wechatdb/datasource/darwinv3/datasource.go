@@ -982,6 +982,39 @@ func (ds *DataSource) MonthlyTrend(ctx context.Context, months int) ([]model.Mon
 	return trends, nil
 }
 
+// GroupMessageTypeStats 统计群聊消息类型分布（Darwin v3）
+func (ds *DataSource) GroupMessageTypeStats(ctx context.Context) (map[string]int64, error) {
+	result := make(map[string]int64)
+	// 构建群聊 md5 映射
+	mapping := make(map[string]string)
+	if cdb, err := ds.dbm.GetDB(ChatRoom); err == nil {
+		if rows, err2 := cdb.QueryContext(ctx, `SELECT IFNULL(m_nsUsrName,"") FROM GroupContact`); err2 == nil {
+			for rows.Next() { var uname string; if rows.Scan(&uname)==nil && uname!="" { sum := md5.Sum([]byte(uname)); mapping["Chat_"+hex.EncodeToString(sum[:])] = uname } }
+			rows.Close()
+		}
+	}
+	dbs, err := ds.dbm.GetDBs(Message)
+	if err != nil { return result, nil }
+	for _, db := range dbs {
+		trows, err := db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Chat_%' AND name NOT LIKE '%_dels'`)
+		if err != nil { continue }
+		var tables []string
+		for trows.Next() { var name string; if trows.Scan(&name)==nil { tables = append(tables, name) } }
+		trows.Close()
+		for _, tbl := range tables { if _, ok := mapping[tbl]; !ok { continue }
+			// 非49
+			q := fmt.Sprintf(`SELECT messageType, COUNT(*) FROM %s WHERE messageType != 49 GROUP BY messageType`, tbl)
+			rows, err2 := db.QueryContext(ctx, q)
+			if err2 == nil { for rows.Next(){ var t int64; var cnt int64; if rows.Scan(&t,&cnt)==nil { label := mapV4TypeToLabel(t); if label!="" { result[label]+=cnt } } }; rows.Close() }
+			// 49
+			q49 := fmt.Sprintf(`SELECT msgContent FROM %s WHERE messageType = 49`, tbl)
+			orows, err3 := db.QueryContext(ctx, q49)
+			if err3 == nil { for orows.Next(){ var mc string; if orows.Scan(&mc)==nil { lc := strings.ToLower(mc); if strings.Contains(lc,"<appmsg"){ if strings.Contains(lc,"<type>") && strings.Contains(lc,"</type>"){ i1:=strings.Index(lc,"<type>"); i2:=strings.Index(lc[i1+6:],"</type>"); if i1>=0 && i2>0 { val := strings.TrimSpace(lc[i1+6:i1+6+i2]); if val=="6" { result["文件消息"]++; continue }; if val=="5" || val=="33" { result["链接消息"]++; continue } } } }; if strings.Contains(lc,"http://") || strings.Contains(lc,"https://") { result["链接消息"]++; continue }; result["XML消息"]++ } }; orows.Close() }
+		}
+	}
+	return result, nil
+}
+
 // Heatmap 小时x星期（wday: 0=Sunday..6）
 func (ds *DataSource) Heatmap(ctx context.Context) ([24][7]int64, error) {
 	var grid [24][7]int64

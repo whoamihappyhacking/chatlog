@@ -1182,3 +1182,32 @@ func (ds *DataSource) GlobalTodayHourly(ctx context.Context) ([24]int64, error) 
 	}
 	return hours, nil
 }
+
+// GroupMessageTypeStats 统计群聊消息类型分布（v4）
+func (ds *DataSource) GroupMessageTypeStats(ctx context.Context) (map[string]int64, error) {
+	result := make(map[string]int64)
+	cdb, err := ds.dbm.GetDB(Contact)
+	if err != nil { return result, nil }
+	urows, err := cdb.QueryContext(ctx, `SELECT username FROM chat_room`)
+	if err != nil { return result, nil }
+	var rooms []string
+	for urows.Next() { var u string; if urows.Scan(&u)==nil { rooms = append(rooms, u) } }
+	urows.Close()
+	if len(rooms) == 0 { return result, nil }
+	dbs, err := ds.dbm.GetDBs(Message)
+	if err != nil { return result, nil }
+	for _, db := range dbs {
+		for _, uname := range rooms {
+			md5sum := md5.Sum([]byte(uname)); tbl := "Msg_" + hex.EncodeToString(md5sum[:])
+			// 先统计非49
+			q := fmt.Sprintf(`SELECT local_type, COUNT(*) FROM %s WHERE local_type != 49 GROUP BY local_type`, tbl)
+			rows, err := db.QueryContext(ctx, q)
+			if err == nil { for rows.Next(){ var t int64; var cnt int64; if rows.Scan(&t,&cnt)==nil { label := mapV4TypeToLabel(t); if label!="" { result[label]+=cnt } } }; rows.Close() }
+			// 处理49
+			q49 := fmt.Sprintf(`SELECT message_content FROM %s WHERE local_type=49`, tbl)
+			orows, err := db.QueryContext(ctx, q49)
+			if err == nil { for orows.Next(){ var mc []byte; if err := orows.Scan(&mc); err==nil { lc := strings.ToLower(string(mc)); if strings.Contains(lc,"<appmsg"){ if strings.Contains(lc,"<type>") && strings.Contains(lc,"</type>"){ i1:=strings.Index(lc,"<type>"); i2:=strings.Index(lc[i1+6:],"</type>"); if i1>=0 && i2>0 { val := strings.TrimSpace(lc[i1+6:i1+6+i2]); if val=="6" { result["文件消息"]++; continue }; if val=="5" || val=="33" { result["链接消息"]++; continue } } } }; if strings.Contains(lc,"http://") || strings.Contains(lc,"https://") { result["链接消息"]++; continue }; result["XML消息"]++ } }; orows.Close() }
+		}
+	}
+	return result, nil
+}

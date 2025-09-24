@@ -153,3 +153,10 @@ func (r *Repository) GroupWeekMessageCount(ctx context.Context) (int64, error) {
     }
     return 0, nil
 }
+
+func (r *Repository) GroupMessageTypeStats(ctx context.Context) (map[string]int64, error) {
+	if ds, ok := r.ds.(interface{ GroupMessageTypeStats(context.Context) (map[string]int64, error) }); ok {
+		return ds.GroupMessageTypeStats(ctx)
+	}
+	return map[string]int64{}, nil
+}

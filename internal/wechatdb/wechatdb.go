@@ -163,3 +163,7 @@ func (w *DB) GroupTodayMessageCounts() (map[string]int64, error) {
 func (w *DB) GroupWeekMessageCount() (int64, error) {
     return w.repo.GroupWeekMessageCount(context.Background())
 }
+
+func (w *DB) GroupMessageTypeStats() (map[string]int64, error) {
+	return w.repo.GroupMessageTypeStats(context.Background())
+}

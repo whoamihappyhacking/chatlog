@@ -38,6 +38,8 @@ type DataSource interface {
 	GlobalMessageStats(ctx context.Context) (*model.GlobalMessageStats, error)
 	// 群聊消息计数：返回 talker(群名) -> count
 	GroupMessageCounts(ctx context.Context) (map[string]int64, error)
+	// 群聊消息类型分布：返回 typeLabel -> count（只统计群消息）
+	GroupMessageTypeStats(ctx context.Context) (map[string]int64, error)
 	// 群聊今日消息计数：返回 talker(群名) -> today_count
 	GroupTodayMessageCounts(ctx context.Context) (map[string]int64, error)
 	// 本周(从周一00:00起)群聊消息总数（所有群合计）

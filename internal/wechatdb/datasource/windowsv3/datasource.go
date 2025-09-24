@@ -902,6 +902,26 @@ func (ds *DataSource) GroupWeekMessageCount(ctx context.Context) (int64, error) 
 	return total, nil
 }
 
+// GroupMessageTypeStats 统计群聊消息类型分布（Windows v3）
+func (ds *DataSource) GroupMessageTypeStats(ctx context.Context) (map[string]int64, error) {
+	result := make(map[string]int64)
+	dbs, err := ds.dbm.GetDBs(Message)
+	if err != nil { return result, nil }
+	for _, db := range dbs {
+		rows, err := db.QueryContext(ctx, `SELECT Type, SubType, COUNT(*) FROM MSG WHERE StrTalker LIKE '%@chatroom' GROUP BY Type, SubType`)
+		if err != nil { continue }
+		for rows.Next() {
+			var t int64; var st int64; var cnt int64
+			if rows.Scan(&t,&st,&cnt)==nil {
+				label := mapV3TypeToLabel(t, st)
+				if label != "" { result[label] += cnt }
+			}
+		}
+		rows.Close()
+	}
+	return result, nil
+}
+
 // MonthlyTrend 返回每月 sent/received（近 months 月，若 months<=0 则返回全部）
 func (ds *DataSource) MonthlyTrend(ctx context.Context, months int) ([]model.MonthlyTrend, error) {
 	agg := make(map[string][2]int64)

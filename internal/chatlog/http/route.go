@@ -325,6 +325,7 @@ func (s *Service) handleDashboard(c *gin.Context) {
 		"撤回消息":0,
 	}
 	for k, v := range gstats.ByType { if _, ok := msgTypes[k]; ok { msgTypes[k] += v } }
+	for k, v := range gstats.ByType { if _, ok := msgTypes[k]; ok { msgTypes[k] += v } }
 
 	// 时间轴
 	durationDays := 0.0
@@ -404,7 +405,7 @@ func (s *Service) handleDashboard(c *gin.Context) {
 		WeeklyAvg int      `json:"weekly_avg"`
 		MostActiveHour string `json:"most_active_hour"`
 	}
-	type ContentAnalysis struct { Text int64 `json:"text_messages"`; Images int64 `json:"images"`; Voice int64 `json:"voice_messages"`; Files int64 `json:"files"`; Links int64 `json:"links"`; FileLinkTotal int64 `json:"file_link_total"`; Others int64 `json:"others"` }
+	type ContentAnalysis struct { Text int64 `json:"text_messages"`; Images int64 `json:"images"`; Voice int64 `json:"voice_messages"`; Files int64 `json:"files"`; Links int64 `json:"links"`; Others int64 `json:"others"` }
 	type GroupListItem struct { Name string `json:"name"`; Members int `json:"members"`; Messages int64 `json:"messages"`; Active bool `json:"active"` }
 	type HourlyActivity struct { Hour string `json:"hour"`; Messages int64 `json:"messages"` }
 	type GroupAnalysis struct {
@@ -510,16 +511,8 @@ func (s *Service) handleDashboard(c *gin.Context) {
 		GroupAnalysis: GroupAnalysis{
 			Title: "群聊分析",
 			Overview: GroupOverview{ TotalGroups: len(overviewGroups), ActiveGroups: activeGroups, TodayMessages: int(todayMessages), WeeklyAvg: weeklyAvg, MostActiveHour: mostActiveHour },
-			// 扩展：增加 links 与汇总 file_link_total
-			ContentAnalysis: ContentAnalysis{
-				Text: msgTypes["文本消息"],
-				Images: msgTypes["图片消息"],
-				Voice: msgTypes["语音消息"],
-				Files: msgTypes["文件消息"],
-				Links: msgTypes["链接消息"],
-				FileLinkTotal: msgTypes["文件消息"] + msgTypes["链接消息"],
-				Others: totalMsgs - (msgTypes["文本消息"] + msgTypes["图片消息"] + msgTypes["语音消息"] + msgTypes["文件消息"] + msgTypes["链接消息"]),
-			},
+			// 扩展：增加 links 字段（结构体需更新）
+			ContentAnalysis: ContentAnalysis{ Text: msgTypes["文本消息"], Images: msgTypes["图片消息"], Voice: msgTypes["语音消息"], Files: msgTypes["文件消息"], Links: msgTypes["链接消息"], Others: totalMsgs - (msgTypes["文本消息"]+msgTypes["图片消息"]+msgTypes["语音消息"]+msgTypes["文件消息"]+msgTypes["链接消息"]) },
 			GroupList: glist,
 			HourlyActivity: hacts,
 		},
