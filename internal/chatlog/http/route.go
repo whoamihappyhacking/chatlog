@@ -350,7 +350,6 @@ func (s *Service) handleDashboard(c *gin.Context) {
 		"撤回消息":0,
 	}
 	for k, v := range gstats.ByType { if _, ok := msgTypes[k]; ok { msgTypes[k] += v } }
-	for k, v := range gstats.ByType { if _, ok := msgTypes[k]; ok { msgTypes[k] += v } }
 
 	// 时间轴
 	durationDays := 0.0
@@ -530,6 +529,33 @@ func (s *Service) handleDashboard(c *gin.Context) {
 		}
 	}
 
+	// ===== 归一化 content_types 百分比（合计 100%）=====
+	// 参与归一化的类别列表（与 DataTypeAnalysis.content_types 一致）
+	ctKeys := []string{
+		"XML消息","位置消息","图片消息","好友推荐消息","好友验证消息","手机端操作消息",
+		"撤回消息","文件消息","文本消息","系统通知","聊天表情","语音消息","链接消息","音视频通话",
+	}
+	var sumCT int64
+	maxKey := ""
+	var maxCnt int64
+	for _, k := range ctKeys {
+		sumCT += msgTypes[k]
+		if msgTypes[k] > maxCnt { maxCnt = msgTypes[k]; maxKey = k }
+	}
+	round2 := func(f float64) float64 { return math.Round(f*100) / 100 }
+	pctCT := func(n int64) float64 {
+		if sumCT == 0 { return 0 }
+		return round2(float64(n) * 100.0 / float64(sumCT))
+	}
+	// 先计算每类百分比与总和
+	ctPerc := make(map[string]float64, len(ctKeys))
+	sumPerc := 0.0
+	for _, k := range ctKeys { p := pctCT(msgTypes[k]); ctPerc[k] = p; sumPerc += p }
+	// 差额校正到 100%
+	if diff := round2(100.0 - sumPerc); diff != 0 && maxKey != "" {
+		ctPerc[maxKey] = round2(ctPerc[maxKey] + diff)
+	}
+
 	vis := Visualization{
 		TrendData: tpoints,
 		HeatmapData: hrows,
@@ -544,22 +570,23 @@ func (s *Service) handleDashboard(c *gin.Context) {
 		DataTypeAnalysis: DataTypeAnalysis{
 			Title: "数据类型统计",
 			ContentTypes: map[string]ContentTypeStats{
-				"文本消息":   { Count: msgTypes["文本消息"], Percentage: pct(msgTypes["文本消息"]), SizeMB: 0, Trend: "" },
-				"图片消息":   { Count: msgTypes["图片消息"], Percentage: pct(msgTypes["图片消息"]), SizeMB: 0, Trend: "" },
-				"语音消息":   { Count: msgTypes["语音消息"], Percentage: pct(msgTypes["语音消息"]), SizeMB: 0, Trend: "" },
-				"文件消息":   { Count: msgTypes["文件消息"], Percentage: pct(msgTypes["文件消息"]), SizeMB: 0, Trend: "" },
-				"链接消息":   { Count: msgTypes["链接消息"], Percentage: pct(msgTypes["链接消息"]), SizeMB: 0, Trend: "" },
-				"XML消息":   { Count: msgTypes["XML消息"], Percentage: pct(msgTypes["XML消息"]), SizeMB: 0, Trend: "" },
-				"好友验证消息": { Count: msgTypes["好友验证消息"], Percentage: pct(msgTypes["好友验证消息"]), SizeMB: 0, Trend: "" },
-				"好友推荐消息": { Count: msgTypes["好友推荐消息"], Percentage: pct(msgTypes["好友推荐消息"]), SizeMB: 0, Trend: "" },
-				"聊天表情":   { Count: msgTypes["聊天表情"], Percentage: pct(msgTypes["聊天表情"]), SizeMB: 0, Trend: "" },
-				"位置消息":   { Count: msgTypes["位置消息"], Percentage: pct(msgTypes["位置消息"]), SizeMB: 0, Trend: "" },
-				"音视频通话": { Count: msgTypes["音视频通话"], Percentage: pct(msgTypes["音视频通话"]), SizeMB: 0, Trend: "" },
-				"手机端操作消息": { Count: msgTypes["手机端操作消息"], Percentage: pct(msgTypes["手机端操作消息"]), SizeMB: 0, Trend: "" },
-				"系统通知":   { Count: msgTypes["系统通知"], Percentage: pct(msgTypes["系统通知"]), SizeMB: 0, Trend: "" },
-				"撤回消息":   { Count: msgTypes["撤回消息"], Percentage: pct(msgTypes["撤回消息"]), SizeMB: 0, Trend: "" },
+				"文本消息": { Count: msgTypes["文本消息"], Percentage: ctPerc["文本消息"], SizeMB: 0, Trend: "" },
+				"图片消息": { Count: msgTypes["图片消息"], Percentage: ctPerc["图片消息"], SizeMB: 0, Trend: "" },
+				"语音消息": { Count: msgTypes["语音消息"], Percentage: ctPerc["语音消息"], SizeMB: 0, Trend: "" },
+				"文件消息": { Count: msgTypes["文件消息"], Percentage: ctPerc["文件消息"], SizeMB: 0, Trend: "" },
+				"链接消息": { Count: msgTypes["链接消息"], Percentage: ctPerc["链接消息"], SizeMB: 0, Trend: "" },
+				"XML消息":   { Count: msgTypes["XML消息"], Percentage: ctPerc["XML消息"], SizeMB: 0, Trend: "" },
+				"好友验证消息": { Count: msgTypes["好友验证消息"], Percentage: ctPerc["好友验证消息"], SizeMB: 0, Trend: "" },
+				"好友推荐消息": { Count: msgTypes["好友推荐消息"], Percentage: ctPerc["好友推荐消息"], SizeMB: 0, Trend: "" },
+				"聊天表情":   { Count: msgTypes["聊天表情"], Percentage: ctPerc["聊天表情"], SizeMB: 0, Trend: "" },
+				"位置消息":   { Count: msgTypes["位置消息"], Percentage: ctPerc["位置消息"], SizeMB: 0, Trend: "" },
+				"音视频通话": { Count: msgTypes["音视频通话"], Percentage: ctPerc["音视频通话"], SizeMB: 0, Trend: "" },
+				"手机端操作消息": { Count: msgTypes["手机端操作消息"], Percentage: ctPerc["手机端操作消息"], SizeMB: 0, Trend: "" },
+				"系统通知":   { Count: msgTypes["系统通知"], Percentage: ctPerc["系统通知"], SizeMB: 0, Trend: "" },
+				"撤回消息":   { Count: msgTypes["撤回消息"], Percentage: ctPerc["撤回消息"], SizeMB: 0, Trend: "" },
 			},
 			SourceChannels: map[string]SourceChannel{
+				// 这里保留使用全量总数的比例（私聊+群聊 ≈ totalMsgs），无需再归一化
 				"私聊数据": { Count: privateTotal, Percentage: pct(privateTotal), AvgSize: 0, Growth: "" },
 				"群聊数据": { Count: groupTotal,   Percentage: pct(groupTotal),   AvgSize: 0, Growth: "" },
 			},
