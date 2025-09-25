@@ -263,28 +263,53 @@ func (s *Service) handleDashboard(c *gin.Context) {
 	dirSize := safeDirSize(dataDir)
 	dbSize := estimateDBSize(workDir)
 
-	// 当前账号昵称（overview.user）：从 DataDir 推断账号名（通常为 wxid_***），再从联系人中查询 NickName
+	// 当前账号昵称（overview.user）：优先从 WorkDir/DataDir 路径中提取 wxid_***，再用联系人 NickName 映射；找不到则回退 wxid
+	extractWxid := func(p string) string {
+		p = strings.TrimSpace(p)
+		if p == "" { return "" }
+		// 遍历路径片段，优先返回形如 wxid_ 开头的片段
+		parts := strings.Split(filepath.Clean(p), string(filepath.Separator))
+		for _, seg := range parts {
+			if strings.HasPrefix(strings.ToLower(seg), "wxid_") {
+				return seg
+			}
+		}
+		// 兜底返回最后一段
+		return filepath.Base(filepath.Clean(p))
+	}
+
 	currentUser := ""
 	accountID := ""
-	if dd := strings.TrimSpace(dataDir); dd != "" {
-		acct := filepath.Base(filepath.Clean(dd))
-		if acct != "" && acct != "." && acct != string(filepath.Separator) {
-			accountID = acct
-			if clist, err := s.db.GetContacts(acct, 0, 0); err == nil && clist != nil {
-				for _, it := range clist.Items {
-					if it != nil && it.UserName == acct {
-						if strings.TrimSpace(it.NickName) != "" { currentUser = it.NickName }
-						break
-					}
-				}
-				// 兜底：若未命中精确用户名，但首项即为精确匹配
-				if currentUser == "" && len(clist.Items) > 0 && clist.Items[0] != nil && clist.Items[0].UserName == acct {
-					currentUser = clist.Items[0].NickName
+	// 先从 WorkDir 提取（更贴近实际解密目录结构），再从 DataDir 提取
+	if wd := s.db.GetWorkDir(); wd != "" && accountID == "" { accountID = extractWxid(wd) }
+	if accountID == "" { accountID = extractWxid(dataDir) }
+
+	// 若拿到候选 accountID，则尝试用联系人映射 NickName
+	if accountID != "" && accountID != "." && accountID != string(filepath.Separator) {
+		// Windows WeChat 4.x: v3 对应 wxid 可能带有第二段后缀，如 wxid_xxx_yyyy
+		// 查找昵称时需要去掉第二个下划线及其后内容
+		lookupID := accountID
+		low := strings.ToLower(lookupID)
+		if strings.HasPrefix(low, "wxid_") {
+			// 定位第二个下划线位置
+			rest := lookupID[len("wxid_"):]
+			if idx := strings.Index(rest, "_"); idx >= 0 {
+				lookupID = lookupID[:len("wxid_")+idx]
+			}
+		}
+		if clist, err := s.db.GetContacts(lookupID, 0, 0); err == nil && clist != nil {
+			for _, it := range clist.Items {
+				if it != nil && it.UserName == lookupID {
+					if strings.TrimSpace(it.NickName) != "" { currentUser = it.NickName }
+					break
 				}
 			}
-			// 最终兜底用账号名（wxid）
-			if currentUser == "" { currentUser = acct }
+			if currentUser == "" && len(clist.Items) > 0 && clist.Items[0] != nil && clist.Items[0].UserName == lookupID {
+				currentUser = clist.Items[0].NickName
+			}
 		}
+		// 最终兜底：回退为 wxid/accountID
+		if strings.TrimSpace(currentUser) == "" { currentUser = accountID }
 	}
 
 	// 联系人统计
