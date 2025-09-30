@@ -130,7 +130,9 @@ func (r *Repository) Heatmap(ctx context.Context) ([24][7]int64, error) {
 }
 
 func (r *Repository) GlobalTodayHourly(ctx context.Context) ([24]int64, error) {
-	if ds, ok := r.ds.(interface{ GlobalTodayHourly(context.Context) ([24]int64, error) }); ok {
+	if ds, ok := r.ds.(interface {
+		GlobalTodayHourly(context.Context) ([24]int64, error)
+	}); ok {
 		return ds.GlobalTodayHourly(ctx)
 	}
 	return [24]int64{}, nil
@@ -141,21 +143,36 @@ func (r *Repository) IntimacyBase(ctx context.Context) (map[string]*model.Intima
 	return r.ds.IntimacyBase(ctx)
 }
 func (r *Repository) GroupTodayMessageCounts(ctx context.Context) (map[string]int64, error) {
-	if ds, ok := r.ds.(interface{ GroupTodayMessageCounts(context.Context) (map[string]int64, error) }); ok {
+	if ds, ok := r.ds.(interface {
+		GroupTodayMessageCounts(context.Context) (map[string]int64, error)
+	}); ok {
 		return ds.GroupTodayMessageCounts(ctx)
 	}
 	return map[string]int64{}, nil
 }
 
+func (r *Repository) GroupTodayHourly(ctx context.Context) (map[string][24]int64, error) {
+	if ds, ok := r.ds.(interface {
+		GroupTodayHourly(context.Context) (map[string][24]int64, error)
+	}); ok {
+		return ds.GroupTodayHourly(ctx)
+	}
+	return map[string][24]int64{}, nil
+}
+
 func (r *Repository) GroupWeekMessageCount(ctx context.Context) (int64, error) {
-    if ds, ok := r.ds.(interface{ GroupWeekMessageCount(context.Context) (int64, error) }); ok {
-        return ds.GroupWeekMessageCount(ctx)
-    }
-    return 0, nil
+	if ds, ok := r.ds.(interface {
+		GroupWeekMessageCount(context.Context) (int64, error)
+	}); ok {
+		return ds.GroupWeekMessageCount(ctx)
+	}
+	return 0, nil
 }
 
 func (r *Repository) GroupMessageTypeStats(ctx context.Context) (map[string]int64, error) {
-	if ds, ok := r.ds.(interface{ GroupMessageTypeStats(context.Context) (map[string]int64, error) }); ok {
+	if ds, ok := r.ds.(interface {
+		GroupMessageTypeStats(context.Context) (map[string]int64, error)
+	}); ok {
 		return ds.GroupMessageTypeStats(ctx)
 	}
 	return map[string]int64{}, nil

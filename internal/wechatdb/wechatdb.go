@@ -149,7 +149,7 @@ func (w *DB) Heatmap() ([24][7]int64, error) {
 }
 
 func (w *DB) GlobalTodayHourly() ([24]int64, error) {
-    return w.repo.GlobalTodayHourly(context.Background())
+	return w.repo.GlobalTodayHourly(context.Background())
 }
 
 func (w *DB) IntimacyBase() (map[string]*model.IntimacyBase, error) {
@@ -160,8 +160,12 @@ func (w *DB) GroupTodayMessageCounts() (map[string]int64, error) {
 	return w.repo.GroupTodayMessageCounts(context.Background())
 }
 
+func (w *DB) GroupTodayHourly() (map[string][24]int64, error) {
+	return w.repo.GroupTodayHourly(context.Background())
+}
+
 func (w *DB) GroupWeekMessageCount() (int64, error) {
-    return w.repo.GroupWeekMessageCount(context.Background())
+	return w.repo.GroupWeekMessageCount(context.Background())
 }
 
 func (w *DB) GroupMessageTypeStats() (map[string]int64, error) {

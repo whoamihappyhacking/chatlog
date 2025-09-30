@@ -295,6 +295,13 @@ func (s *Service) handleDashboard(c *gin.Context) {
 		return
 	}
 	groupCounts, _ := s.db.GetDB().GroupMessageCounts()
+	groupHourlyRaw, _ := s.db.GetDB().GroupTodayHourly()
+
+	type HourlySeries struct {
+		Hour     string `json:"hour"`
+		Messages int64  `json:"messages"`
+	}
+
 	trends, _ := s.db.GetDB().MonthlyTrend(0)
 	heat, _ := s.db.GetDB().Heatmap()
 
@@ -372,6 +379,7 @@ func (s *Service) handleDashboard(c *gin.Context) {
 
 	// 群信息（合并消息计数）
 	overviewGroups := make([]map[string]any, 0)
+	groupNameMap := make(map[string]string)
 	activeGroups := 0
 	if rooms, err := s.db.GetChatRooms("", 0, 0); err == nil {
 		for _, r := range rooms.Items {
@@ -383,11 +391,22 @@ func (s *Service) handleDashboard(c *gin.Context) {
 			if mc > 0 {
 				activeGroups++
 			}
+			groupNameMap[r.Name] = r.NickName
+			arr := groupHourlyRaw[r.Name]
+			series := make([]HourlySeries, 0, 24)
+			for h := 0; h < 24; h++ {
+				if arr[h] == 0 {
+					continue
+				}
+				series = append(series, HourlySeries{Hour: fmt.Sprintf("%02d:00", h), Messages: arr[h]})
+			}
 			overviewGroups = append(overviewGroups, map[string]any{
-				"ChatRoomName":  r.Name,
-				"NickName":      r.NickName,
-				"member_count":  len(r.Users),
-				"message_count": mc,
+				"ChatRoomName":    r.Name,
+				"NickName":        r.NickName,
+				"member_count":    len(r.Users),
+				"message_count":   mc,
+				"active":          mc > 0,
+				"hourly_activity": series,
 			})
 		}
 	}
@@ -446,20 +465,6 @@ func (s *Service) handleDashboard(c *gin.Context) {
 	}
 	mostActiveHour := fmt.Sprintf("%02d:00-%02d:00", maxHour, (maxHour+1)%24)
 
-	// groupAnalysis（基础占位+部分真实值）
-	groupList := make([]map[string]any, 0, len(overviewGroups))
-	for _, g := range overviewGroups {
-		groupList = append(groupList, map[string]any{
-			"name":     g["NickName"],
-			"members":  g["member_count"],
-			"messages": g["message_count"],
-			"active":   (g["message_count"].(int64) > 0),
-		})
-	}
-	hourlyActivity := make([]map[string]any, 0, 24)
-	for h := 0; h < 24; h++ {
-		hourlyActivity = append(hourlyActivity, map[string]any{"hour": fmt.Sprintf("%02d:00", h), "messages": perHourTotal[h]})
-	}
 	// 内容占比（基于 msgTypes）
 	totalMsgs := gstats.Total
 	pct := func(n int64) float64 {
@@ -487,10 +492,12 @@ func (s *Service) handleDashboard(c *gin.Context) {
 		UniqueMsgTypes int   `json:"unique_msg_types"`
 	}
 	type OverviewGroup struct {
-		ChatRoomName string `json:"ChatRoomName"`
-		NickName     string `json:"NickName"`
-		MemberCount  int    `json:"member_count"`
-		MessageCount int64  `json:"message_count"`
+		ChatRoomName   string         `json:"ChatRoomName"`
+		NickName       string         `json:"NickName"`
+		MemberCount    int            `json:"member_count"`
+		MessageCount   int64          `json:"message_count"`
+		Active         bool           `json:"active"`
+		HourlyActivity []HourlySeries `json:"hourly_activity"`
 	}
 	type Timeline struct {
 		Earliest int64   `json:"earliest_msg_time"`
@@ -555,21 +562,17 @@ func (s *Service) handleDashboard(c *gin.Context) {
 		Links  int64 `json:"links"`
 		Others int64 `json:"others"`
 	}
-	type GroupListItem struct {
-		Name     string `json:"name"`
-		Members  int    `json:"members"`
-		Messages int64  `json:"messages"`
-		Active   bool   `json:"active"`
-	}
 	type HourlyActivity struct {
-		Hour     string `json:"hour"`
-		Messages int64  `json:"messages"`
+		Group  string         `json:"group"`
+		Name   string         `json:"name"`
+		Total  int64          `json:"total_messages"`
+		Series []HourlySeries `json:"series"`
 	}
 	type GroupAnalysis struct {
 		Title           string           `json:"title"`
 		Overview        GroupOverview    `json:"overview"`
 		ContentAnalysis ContentAnalysis  `json:"content_analysis"`
-		GroupList       []GroupListItem  `json:"group_list"`
+		GroupList       []OverviewGroup  `json:"group_list"`
 		HourlyActivity  []HourlyActivity `json:"hourly_activity"`
 	}
 	type ContentTypeStats struct {
@@ -581,9 +584,9 @@ func (s *Service) handleDashboard(c *gin.Context) {
 		Percentage float64 `json:"percentage"`
 	}
 	type DataTypeAnalysis struct {
-		Title            string                      `json:"title"`
-		ContentTypes     map[string]ContentTypeStats `json:"content_types"`
-		SourceChannels   map[string]SourceChannel    `json:"source_channels"`
+		Title          string                      `json:"title"`
+		ContentTypes   map[string]ContentTypeStats `json:"content_types"`
+		SourceChannels map[string]SourceChannel    `json:"source_channels"`
 	}
 	type Visualization struct {
 		TrendData        []TrendPoint     `json:"trendData"`
@@ -605,11 +608,17 @@ func (s *Service) handleDashboard(c *gin.Context) {
 
 	ogroups := make([]OverviewGroup, 0, len(overviewGroups))
 	for _, g := range overviewGroups {
+		series := []HourlySeries{}
+		if raw, ok := g["hourly_activity"].([]HourlySeries); ok {
+			series = append(series, raw...)
+		}
 		ogroups = append(ogroups, OverviewGroup{
-			ChatRoomName: g["ChatRoomName"].(string),
-			NickName:     g["NickName"].(string),
-			MemberCount:  g["member_count"].(int),
-			MessageCount: g["message_count"].(int64),
+			ChatRoomName:   g["ChatRoomName"].(string),
+			NickName:       g["NickName"].(string),
+			MemberCount:    g["member_count"].(int),
+			MessageCount:   g["message_count"].(int64),
+			Active:         g["active"].(bool),
+			HourlyActivity: series,
 		})
 	}
 	tpoints := make([]TrendPoint, 0, len(trendData))
@@ -629,20 +638,45 @@ func (s *Service) handleDashboard(c *gin.Context) {
 			Sunday:    heat[h][0],
 		})
 	}
-	// group list typed
-	glist := make([]GroupListItem, 0, len(groupList))
-	for _, it := range groupList {
-		glist = append(glist, GroupListItem{
-			Name:     it["name"].(string),
-			Members:  it["members"].(int),
-			Messages: it["messages"].(int64),
-			Active:   it["active"].(bool),
-		})
+	// hourly activity typed（每个群独立统计）
+	type groupHourlyAgg struct {
+		id    string
+		name  string
+		total int64
+		hours [24]int64
 	}
-	// hourly activity typed
-	hacts := make([]HourlyActivity, 0, len(hourlyActivity))
-	for _, it := range hourlyActivity {
-		hacts = append(hacts, HourlyActivity{Hour: it["hour"].(string), Messages: it["messages"].(int64)})
+	ghagg := make([]groupHourlyAgg, 0, len(groupHourlyRaw))
+	for gid, arr := range groupHourlyRaw {
+		var total int64
+		for _, v := range arr {
+			total += v
+		}
+		// 如果全天无消息则跳过
+		if total == 0 {
+			continue
+		}
+		name := groupNameMap[gid]
+		if strings.TrimSpace(name) == "" {
+			name = gid
+		}
+		ghagg = append(ghagg, groupHourlyAgg{id: gid, name: name, total: total, hours: arr})
+	}
+	sort.Slice(ghagg, func(i, j int) bool {
+		if ghagg[i].total == ghagg[j].total {
+			return ghagg[i].name < ghagg[j].name
+		}
+		return ghagg[i].total > ghagg[j].total
+	})
+	hacts := make([]HourlyActivity, 0, len(ghagg))
+	for _, item := range ghagg {
+		series := make([]HourlySeries, 0, 24)
+		for h := 0; h < 24; h++ {
+			if item.hours[h] == 0 {
+				continue
+			}
+			series = append(series, HourlySeries{Hour: fmt.Sprintf("%02d:00", h), Messages: item.hours[h]})
+		}
+		hacts = append(hacts, HourlyActivity{Group: item.id, Name: item.name, Total: item.total, Series: series})
 	}
 
 	// ====== 今日群聊消息数统计 ======
@@ -848,7 +882,7 @@ func (s *Service) handleDashboard(c *gin.Context) {
 			Overview: GroupOverview{TotalGroups: len(overviewGroups), ActiveGroups: activeGroups, TodayMessages: int(todayMessages), WeeklyAvg: weeklyAvg, MostActiveHour: mostActiveHour},
 			// 扩展：增加 links 字段（结构体需更新）
 			ContentAnalysis: ContentAnalysis{Text: msgTypes["文本消息"], Images: msgTypes["图片消息"], Voice: msgTypes["语音消息"], Files: msgTypes["文件消息"], Links: msgTypes["链接消息"], Others: totalMsgs - (msgTypes["文本消息"] + msgTypes["图片消息"] + msgTypes["语音消息"] + msgTypes["文件消息"] + msgTypes["链接消息"])},
-			GroupList:       glist,
+			GroupList:       ogroups,
 			HourlyActivity:  hacts,
 		},
 		DataTypeAnalysis: DataTypeAnalysis{

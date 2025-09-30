@@ -810,7 +810,9 @@ func (ds *DataSource) GetAvatar(ctx context.Context, username string, size strin
 func (ds *DataSource) GlobalMessageStats(ctx context.Context) (*model.GlobalMessageStats, error) {
 	stats := &model.GlobalMessageStats{ByType: make(map[string]int64)}
 	dbs, err := ds.dbm.GetDBs(Message)
-	if err != nil { return stats, nil }
+	if err != nil {
+		return stats, nil
+	}
 	for _, db := range dbs {
 		// total/sent/recv/min/max
 		row := db.QueryRowContext(ctx, `SELECT 
@@ -825,18 +827,26 @@ func (ds *DataSource) GlobalMessageStats(ctx context.Context) (*model.GlobalMess
 			stats.Total += total
 			stats.Sent += sent
 			stats.Received += recv
-			if stats.EarliestUnix == 0 || (minct > 0 && minct < stats.EarliestUnix) { stats.EarliestUnix = minct }
-			if maxct > stats.LatestUnix { stats.LatestUnix = maxct }
+			if stats.EarliestUnix == 0 || (minct > 0 && minct < stats.EarliestUnix) {
+				stats.EarliestUnix = minct
+			}
+			if maxct > stats.LatestUnix {
+				stats.LatestUnix = maxct
+			}
 		}
 
 		// By type/subtype
 		rows, err := db.QueryContext(ctx, `SELECT Type, SubType, COUNT(*) FROM MSG GROUP BY Type, SubType`)
 		if err == nil {
 			for rows.Next() {
-				var t int64; var st int; var cnt int64
+				var t int64
+				var st int
+				var cnt int64
 				if err := rows.Scan(&t, &st, &cnt); err == nil {
 					label := mapV3TypeToLabel(t, int64(st))
-					if label != "" { stats.ByType[label] += cnt }
+					if label != "" {
+						stats.ByType[label] += cnt
+					}
 				}
 			}
 			rows.Close()
@@ -849,13 +859,20 @@ func (ds *DataSource) GlobalMessageStats(ctx context.Context) (*model.GlobalMess
 func (ds *DataSource) GroupMessageCounts(ctx context.Context) (map[string]int64, error) {
 	result := make(map[string]int64)
 	dbs, err := ds.dbm.GetDBs(Message)
-	if err != nil { return result, nil }
+	if err != nil {
+		return result, nil
+	}
 	for _, db := range dbs {
 		rows, err := db.QueryContext(ctx, `SELECT StrTalker, COUNT(*) FROM MSG WHERE StrTalker LIKE '%@chatroom' GROUP BY StrTalker`)
-		if err != nil { continue }
+		if err != nil {
+			continue
+		}
 		for rows.Next() {
-			var talker string; var cnt int64
-			if err := rows.Scan(&talker, &cnt); err == nil { result[talker] += cnt }
+			var talker string
+			var cnt int64
+			if err := rows.Scan(&talker, &cnt); err == nil {
+				result[talker] += cnt
+			}
 		}
 		rows.Close()
 	}
@@ -866,17 +883,56 @@ func (ds *DataSource) GroupMessageCounts(ctx context.Context) (map[string]int64,
 func (ds *DataSource) GroupTodayMessageCounts(ctx context.Context) (map[string]int64, error) {
 	result := make(map[string]int64)
 	dbs, err := ds.dbm.GetDBs(Message)
-	if err != nil { return result, nil }
+	if err != nil {
+		return result, nil
+	}
 	// 今日零点（使用本地时区）
 	now := time.Now()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	since := today.Unix()
 	for _, db := range dbs {
 		rows, err := db.QueryContext(ctx, `SELECT StrTalker, COUNT(*) FROM MSG WHERE StrTalker LIKE '%@chatroom' AND CreateTime >= ? GROUP BY StrTalker`, since)
-		if err != nil { continue }
+		if err != nil {
+			continue
+		}
 		for rows.Next() {
-			var talker string; var cnt int64
-			if err := rows.Scan(&talker, &cnt); err == nil { result[talker] += cnt }
+			var talker string
+			var cnt int64
+			if err := rows.Scan(&talker, &cnt); err == nil {
+				result[talker] += cnt
+			}
+		}
+		rows.Close()
+	}
+	return result, nil
+}
+
+// GroupTodayHourly 统计群聊今日按小时消息数（Windows v3）
+func (ds *DataSource) GroupTodayHourly(ctx context.Context) (map[string][24]int64, error) {
+	result := make(map[string][24]int64)
+	dbs, err := ds.dbm.GetDBs(Message)
+	if err != nil {
+		return result, nil
+	}
+	now := time.Now()
+	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).Unix()
+	end := start + 86400
+	for _, db := range dbs {
+		rows, err := db.QueryContext(ctx, `SELECT StrTalker, CAST(strftime('%H', datetime(CreateTime,'unixepoch')) AS INTEGER) AS h, COUNT(*) FROM MSG WHERE StrTalker LIKE '%@chatroom' AND CreateTime >= ? AND CreateTime < ? GROUP BY StrTalker, h`, start, end)
+		if err != nil {
+			continue
+		}
+		for rows.Next() {
+			var talker string
+			var hour int
+			var cnt int64
+			if rows.Scan(&talker, &hour, &cnt) == nil {
+				if hour >= 0 && hour < 24 {
+					bucket := result[talker]
+					bucket[hour] += cnt
+					result[talker] = bucket
+				}
+			}
 		}
 		rows.Close()
 	}
@@ -887,17 +943,23 @@ func (ds *DataSource) GroupTodayMessageCounts(ctx context.Context) (map[string]i
 func (ds *DataSource) GroupWeekMessageCount(ctx context.Context) (int64, error) {
 	var total int64
 	dbs, err := ds.dbm.GetDBs(Message)
-	if err != nil { return 0, nil }
+	if err != nil {
+		return 0, nil
+	}
 	now := time.Now()
 	wday := int(now.Weekday())
 	offset := wday - 1
-	if wday == 0 { offset = -6 }
-	monday := time.Date(now.Year(), now.Month(), now.Day(), 0,0,0,0, now.Location()).AddDate(0,0,-offset)
+	if wday == 0 {
+		offset = -6
+	}
+	monday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).AddDate(0, 0, -offset)
 	since := monday.Unix()
 	for _, db := range dbs {
 		row := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM MSG WHERE StrTalker LIKE '%@chatroom' AND CreateTime >= ?`, since)
 		var cnt int64
-		if row.Scan(&cnt) == nil { total += cnt }
+		if row.Scan(&cnt) == nil {
+			total += cnt
+		}
 	}
 	return total, nil
 }
@@ -906,15 +968,23 @@ func (ds *DataSource) GroupWeekMessageCount(ctx context.Context) (int64, error) 
 func (ds *DataSource) GroupMessageTypeStats(ctx context.Context) (map[string]int64, error) {
 	result := make(map[string]int64)
 	dbs, err := ds.dbm.GetDBs(Message)
-	if err != nil { return result, nil }
+	if err != nil {
+		return result, nil
+	}
 	for _, db := range dbs {
 		rows, err := db.QueryContext(ctx, `SELECT Type, SubType, COUNT(*) FROM MSG WHERE StrTalker LIKE '%@chatroom' GROUP BY Type, SubType`)
-		if err != nil { continue }
+		if err != nil {
+			continue
+		}
 		for rows.Next() {
-			var t int64; var st int64; var cnt int64
-			if rows.Scan(&t,&st,&cnt)==nil {
+			var t int64
+			var st int64
+			var cnt int64
+			if rows.Scan(&t, &st, &cnt) == nil {
 				label := mapV3TypeToLabel(t, st)
-				if label != "" { result[label] += cnt }
+				if label != "" {
+					result[label] += cnt
+				}
 			}
 		}
 		rows.Close()
@@ -926,18 +996,24 @@ func (ds *DataSource) GroupMessageTypeStats(ctx context.Context) (map[string]int
 func (ds *DataSource) MonthlyTrend(ctx context.Context, months int) ([]model.MonthlyTrend, error) {
 	agg := make(map[string][2]int64)
 	dbs, err := ds.dbm.GetDBs(Message)
-	if err != nil { return []model.MonthlyTrend{}, nil }
+	if err != nil {
+		return []model.MonthlyTrend{}, nil
+	}
 	for _, db := range dbs {
 		rows, err := db.QueryContext(ctx, `SELECT strftime('%Y-%m', datetime(CreateTime, 'unixepoch')) AS ym,
 			SUM(CASE WHEN IsSender=1 THEN 1 ELSE 0 END) AS sent,
 			SUM(CASE WHEN IsSender=0 THEN 1 ELSE 0 END) AS recv
 			FROM MSG GROUP BY ym ORDER BY ym`)
-		if err != nil { continue }
+		if err != nil {
+			continue
+		}
 		for rows.Next() {
-			var ym string; var sent, recv int64
+			var ym string
+			var sent, recv int64
 			if err := rows.Scan(&ym, &sent, &recv); err == nil {
 				cur := agg[ym]
-				cur[0] += sent; cur[1] += recv
+				cur[0] += sent
+				cur[1] += recv
 				agg[ym] = cur
 			}
 		}
@@ -957,16 +1033,23 @@ func (ds *DataSource) MonthlyTrend(ctx context.Context, months int) ([]model.Mon
 func (ds *DataSource) Heatmap(ctx context.Context) ([24][7]int64, error) {
 	var grid [24][7]int64
 	dbs, err := ds.dbm.GetDBs(Message)
-	if err != nil { return grid, nil }
+	if err != nil {
+		return grid, nil
+	}
 	for _, db := range dbs {
 		rows, err := db.QueryContext(ctx, `SELECT CAST(strftime('%H', datetime(CreateTime,'unixepoch')) AS INTEGER) AS h,
 			CAST(strftime('%w', datetime(CreateTime,'unixepoch')) AS INTEGER) AS d,
 			COUNT(*) FROM MSG GROUP BY h,d`)
-		if err != nil { continue }
+		if err != nil {
+			continue
+		}
 		for rows.Next() {
-			var h, d int; var cnt int64
+			var h, d int
+			var cnt int64
 			if err := rows.Scan(&h, &d, &cnt); err == nil {
-				if h>=0 && h<24 && d>=0 && d<7 { grid[h][d] += cnt }
+				if h >= 0 && h < 24 && d >= 0 && d < 7 {
+					grid[h][d] += cnt
+				}
 			}
 		}
 		rows.Close()
@@ -978,17 +1061,24 @@ func (ds *DataSource) Heatmap(ctx context.Context) ([24][7]int64, error) {
 func (ds *DataSource) GlobalTodayHourly(ctx context.Context) ([24]int64, error) {
 	var hours [24]int64
 	dbs, err := ds.dbm.GetDBs(Message)
-	if err != nil { return hours, nil }
+	if err != nil {
+		return hours, nil
+	}
 	now := time.Now()
-	start := time.Date(now.Year(), now.Month(), now.Day(), 0,0,0,0, now.Location()).Unix()
+	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).Unix()
 	end := start + 86400
 	for _, db := range dbs {
 		rows, err := db.QueryContext(ctx, `SELECT CAST(strftime('%H', datetime(CreateTime,'unixepoch')) AS INTEGER) AS h, COUNT(*) FROM MSG WHERE CreateTime >= ? AND CreateTime < ? GROUP BY h`, start, end)
-		if err != nil { continue }
+		if err != nil {
+			continue
+		}
 		for rows.Next() {
-			var h int; var cnt int64
+			var h int
+			var cnt int64
 			if rows.Scan(&h, &cnt) == nil {
-				if h>=0 && h<24 { hours[h] += cnt }
+				if h >= 0 && h < 24 {
+					hours[h] += cnt
+				}
 			}
 		}
 		rows.Close()
@@ -1001,16 +1091,22 @@ func (ds *DataSource) IntimacyBase(ctx context.Context) (map[string]*model.Intim
 	result := make(map[string]*model.IntimacyBase)
 
 	dbs, err := ds.dbm.GetDBs(Message)
-	if err != nil { return result, nil }
+	if err != nil {
+		return result, nil
+	}
 
 	// 先获取全局最新时间戳
 	var maxCT int64
 	for _, db := range dbs {
 		row := db.QueryRowContext(ctx, `SELECT MAX(CreateTime) FROM MSG`)
 		var v sql.NullInt64
-		if err := row.Scan(&v); err == nil && v.Valid && v.Int64 > maxCT { maxCT = v.Int64 }
+		if err := row.Scan(&v); err == nil && v.Valid && v.Int64 > maxCT {
+			maxCT = v.Int64
+		}
 	}
-	if maxCT == 0 { return result, nil }
+	if maxCT == 0 {
+		return result, nil
+	}
 	since90 := maxCT - 90*86400
 	since7 := maxCT - 7*86400
 
@@ -1025,15 +1121,23 @@ func (ds *DataSource) IntimacyBase(ctx context.Context) (map[string]*model.Intim
 			FROM MSG WHERE StrTalker NOT LIKE '%@chatroom' GROUP BY StrTalker`)
 		if err == nil {
 			for rows.Next() {
-				var talker string; var msgCnt, minct, maxct, sent, recv int64
+				var talker string
+				var msgCnt, minct, maxct, sent, recv int64
 				if err := rows.Scan(&talker, &msgCnt, &minct, &maxct, &sent, &recv); err == nil {
 					base := result[talker]
-					if base == nil { base = &model.IntimacyBase{UserName: talker}; result[talker] = base }
+					if base == nil {
+						base = &model.IntimacyBase{UserName: talker}
+						result[talker] = base
+					}
 					base.MsgCount += msgCnt
 					base.SentCount += sent
 					base.ReceivedCount += recv
-					if base.MinCreateUnix == 0 || (minct > 0 && minct < base.MinCreateUnix) { base.MinCreateUnix = minct }
-					if maxct > base.MaxCreateUnix { base.MaxCreateUnix = maxct }
+					if base.MinCreateUnix == 0 || (minct > 0 && minct < base.MinCreateUnix) {
+						base.MinCreateUnix = minct
+					}
+					if maxct > base.MaxCreateUnix {
+						base.MaxCreateUnix = maxct
+					}
 				}
 			}
 			rows.Close()
@@ -1044,10 +1148,14 @@ func (ds *DataSource) IntimacyBase(ctx context.Context) (map[string]*model.Intim
 			FROM MSG WHERE StrTalker NOT LIKE '%@chatroom' GROUP BY StrTalker`)
 		if err == nil {
 			for rows2.Next() {
-				var talker string; var days int64
+				var talker string
+				var days int64
 				if err := rows2.Scan(&talker, &days); err == nil {
 					base := result[talker]
-					if base == nil { base = &model.IntimacyBase{UserName: talker}; result[talker] = base }
+					if base == nil {
+						base = &model.IntimacyBase{UserName: talker}
+						result[talker] = base
+					}
 					base.MessagingDays += days
 				}
 			}
@@ -1058,10 +1166,14 @@ func (ds *DataSource) IntimacyBase(ctx context.Context) (map[string]*model.Intim
 		rows3, err := db.QueryContext(ctx, `SELECT StrTalker, COUNT(*) FROM MSG WHERE CreateTime>=? AND StrTalker NOT LIKE '%@chatroom' GROUP BY StrTalker`, since90)
 		if err == nil {
 			for rows3.Next() {
-				var talker string; var cnt int64
+				var talker string
+				var cnt int64
 				if err := rows3.Scan(&talker, &cnt); err == nil {
 					base := result[talker]
-					if base == nil { base = &model.IntimacyBase{UserName: talker}; result[talker] = base }
+					if base == nil {
+						base = &model.IntimacyBase{UserName: talker}
+						result[talker] = base
+					}
 					base.Last90DaysMsg += cnt
 				}
 			}
@@ -1072,11 +1184,17 @@ func (ds *DataSource) IntimacyBase(ctx context.Context) (map[string]*model.Intim
 		rows4, err := db.QueryContext(ctx, `SELECT StrTalker, SUM(CASE WHEN IsSender=1 THEN 1 ELSE 0 END) FROM MSG WHERE CreateTime>=? AND StrTalker NOT LIKE '%@chatroom' GROUP BY StrTalker`, since7)
 		if err == nil {
 			for rows4.Next() {
-				var talker string; var cnt sql.NullInt64
+				var talker string
+				var cnt sql.NullInt64
 				if err := rows4.Scan(&talker, &cnt); err == nil {
 					base := result[talker]
-					if base == nil { base = &model.IntimacyBase{UserName: talker}; result[talker] = base }
-					if cnt.Valid { base.Past7DaysSentMsg += cnt.Int64 }
+					if base == nil {
+						base = &model.IntimacyBase{UserName: talker}
+						result[talker] = base
+					}
+					if cnt.Valid {
+						base.Past7DaysSentMsg += cnt.Int64
+					}
 				}
 			}
 			rows4.Close()

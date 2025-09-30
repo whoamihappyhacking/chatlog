@@ -42,6 +42,8 @@ type DataSource interface {
 	GroupMessageTypeStats(ctx context.Context) (map[string]int64, error)
 	// 群聊今日消息计数：返回 talker(群名) -> today_count
 	GroupTodayMessageCounts(ctx context.Context) (map[string]int64, error)
+	// 群聊今日按小时计数：返回 talker(群名) -> [24]hour_counts
+	GroupTodayHourly(ctx context.Context) (map[string][24]int64, error)
 	// 本周(从周一00:00起)群聊消息总数（所有群合计）
 	GroupWeekMessageCount(ctx context.Context) (int64, error)
 	// 月度趋势（YYYY-MM）：sent/received

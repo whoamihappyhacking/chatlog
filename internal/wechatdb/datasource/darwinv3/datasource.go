@@ -165,20 +165,38 @@ func (ds *DataSource) IntimacyBase(ctx context.Context) (map[string]*model.Intim
 	result := make(map[string]*model.IntimacyBase)
 
 	dbs, err := ds.dbm.GetDBs(Message)
-	if err != nil { return result, nil }
+	if err != nil {
+		return result, nil
+	}
 
 	var maxCT int64
-	type tbl struct{ db *sql.DB; name string }
+	type tbl struct {
+		db   *sql.DB
+		name string
+	}
 	var tables []tbl
 	for _, db := range dbs {
 		rows, err := db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Chat_%'`)
 		if err == nil {
-			for rows.Next() { var name string; if err := rows.Scan(&name); err == nil { tables = append(tables, tbl{db: db, name: name}) } }
+			for rows.Next() {
+				var name string
+				if err := rows.Scan(&name); err == nil {
+					tables = append(tables, tbl{db: db, name: name})
+				}
+			}
 			rows.Close()
 		}
 	}
-	for _, t := range tables { row := t.db.QueryRowContext(ctx, `SELECT MAX(msgCreateTime) FROM `+t.name); var v sql.NullInt64; if err := row.Scan(&v); err == nil && v.Valid && v.Int64 > maxCT { maxCT = v.Int64 } }
-	if maxCT == 0 { return result, nil }
+	for _, t := range tables {
+		row := t.db.QueryRowContext(ctx, `SELECT MAX(msgCreateTime) FROM `+t.name)
+		var v sql.NullInt64
+		if err := row.Scan(&v); err == nil && v.Valid && v.Int64 > maxCT {
+			maxCT = v.Int64
+		}
+	}
+	if maxCT == 0 {
+		return result, nil
+	}
 	since90 := maxCT - 90*86400
 	since7 := maxCT - 7*86400
 
@@ -197,16 +215,26 @@ func (ds *DataSource) IntimacyBase(ctx context.Context) (map[string]*model.Intim
 		rows, err := t.db.QueryContext(ctx, q)
 		if err == nil {
 			for rows.Next() {
-				var uname string; var cnt, minct, maxct, sent, recv int64
+				var uname string
+				var cnt, minct, maxct, sent, recv int64
 				if err := rows.Scan(&uname, &cnt, &minct, &maxct, &sent, &recv); err == nil {
-					if strings.TrimSpace(uname) == "" { continue }
+					if strings.TrimSpace(uname) == "" {
+						continue
+					}
 					base := result[uname]
-					if base == nil { base = &model.IntimacyBase{UserName: uname}; result[uname] = base }
+					if base == nil {
+						base = &model.IntimacyBase{UserName: uname}
+						result[uname] = base
+					}
 					base.MsgCount += cnt
 					base.SentCount += sent
 					base.ReceivedCount += recv
-					if base.MinCreateUnix == 0 || (minct > 0 && minct < base.MinCreateUnix) { base.MinCreateUnix = minct }
-					if maxct > base.MaxCreateUnix { base.MaxCreateUnix = maxct }
+					if base.MinCreateUnix == 0 || (minct > 0 && minct < base.MinCreateUnix) {
+						base.MinCreateUnix = minct
+					}
+					if maxct > base.MaxCreateUnix {
+						base.MaxCreateUnix = maxct
+					}
 				}
 			}
 			rows.Close()
@@ -219,7 +247,21 @@ func (ds *DataSource) IntimacyBase(ctx context.Context) (map[string]*model.Intim
 			GROUP BY COALESCE(n.user_name,'')`
 		rows2, err := t.db.QueryContext(ctx, q2)
 		if err == nil {
-			for rows2.Next() { var uname string; var days int64; if err := rows2.Scan(&uname, &days); err == nil { if strings.TrimSpace(uname) == "" { continue }; base := result[uname]; if base == nil { base = &model.IntimacyBase{UserName: uname}; result[uname] = base }; base.MessagingDays += days } }
+			for rows2.Next() {
+				var uname string
+				var days int64
+				if err := rows2.Scan(&uname, &days); err == nil {
+					if strings.TrimSpace(uname) == "" {
+						continue
+					}
+					base := result[uname]
+					if base == nil {
+						base = &model.IntimacyBase{UserName: uname}
+						result[uname] = base
+					}
+					base.MessagingDays += days
+				}
+			}
 			rows2.Close()
 		}
 
@@ -230,7 +272,21 @@ func (ds *DataSource) IntimacyBase(ctx context.Context) (map[string]*model.Intim
 			GROUP BY COALESCE(n.user_name,'')`
 		rows3, err := t.db.QueryContext(ctx, q3, since90)
 		if err == nil {
-			for rows3.Next() { var uname string; var cnt int64; if err := rows3.Scan(&uname, &cnt); err == nil { if strings.TrimSpace(uname) == "" { continue }; base := result[uname]; if base == nil { base = &model.IntimacyBase{UserName: uname}; result[uname] = base }; base.Last90DaysMsg += cnt } }
+			for rows3.Next() {
+				var uname string
+				var cnt int64
+				if err := rows3.Scan(&uname, &cnt); err == nil {
+					if strings.TrimSpace(uname) == "" {
+						continue
+					}
+					base := result[uname]
+					if base == nil {
+						base = &model.IntimacyBase{UserName: uname}
+						result[uname] = base
+					}
+					base.Last90DaysMsg += cnt
+				}
+			}
 			rows3.Close()
 		}
 
@@ -241,7 +297,23 @@ func (ds *DataSource) IntimacyBase(ctx context.Context) (map[string]*model.Intim
 			GROUP BY COALESCE(n.user_name,'')`
 		rows4, err := t.db.QueryContext(ctx, q4, since7)
 		if err == nil {
-			for rows4.Next() { var uname string; var cnt sql.NullInt64; if err := rows4.Scan(&uname, &cnt); err == nil { if strings.TrimSpace(uname) == "" { continue }; base := result[uname]; if base == nil { base = &model.IntimacyBase{UserName: uname}; result[uname] = base }; if cnt.Valid { base.Past7DaysSentMsg += cnt.Int64 } } }
+			for rows4.Next() {
+				var uname string
+				var cnt sql.NullInt64
+				if err := rows4.Scan(&uname, &cnt); err == nil {
+					if strings.TrimSpace(uname) == "" {
+						continue
+					}
+					base := result[uname]
+					if base == nil {
+						base = &model.IntimacyBase{UserName: uname}
+						result[uname] = base
+					}
+					if cnt.Valid {
+						base.Past7DaysSentMsg += cnt.Int64
+					}
+				}
+			}
 			rows4.Close()
 		}
 	}
@@ -753,12 +825,21 @@ func (ds *DataSource) GlobalMessageStats(ctx context.Context) (*model.GlobalMess
 	stats := &model.GlobalMessageStats{ByType: make(map[string]int64)}
 	// 遍历所有消息库，枚举 Chat_% 表
 	dbs, err := ds.dbm.GetDBs(Message)
-	if err != nil { return stats, nil }
+	if err != nil {
+		return stats, nil
+	}
 	for _, db := range dbs {
 		trows, err := db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Chat_%' AND name NOT LIKE '%_dels'`)
-		if err != nil { continue }
+		if err != nil {
+			continue
+		}
 		var tables []string
-		for trows.Next() { var name string; if err := trows.Scan(&name); err == nil { tables = append(tables, name) } }
+		for trows.Next() {
+			var name string
+			if err := trows.Scan(&name); err == nil {
+				tables = append(tables, name)
+			}
+		}
 		trows.Close()
 		for _, tbl := range tables {
 			q := fmt.Sprintf(`SELECT COUNT(*) AS total,
@@ -771,18 +852,25 @@ func (ds *DataSource) GlobalMessageStats(ctx context.Context) (*model.GlobalMess
 				stats.Total += total
 				stats.Sent += sent
 				stats.Received += (total - sent)
-				if stats.EarliestUnix == 0 || (minct > 0 && minct < stats.EarliestUnix) { stats.EarliestUnix = minct }
-				if maxct > stats.LatestUnix { stats.LatestUnix = maxct }
+				if stats.EarliestUnix == 0 || (minct > 0 && minct < stats.EarliestUnix) {
+					stats.EarliestUnix = minct
+				}
+				if maxct > stats.LatestUnix {
+					stats.LatestUnix = maxct
+				}
 			}
 			// by type（先统计非 49）
 			q2 := fmt.Sprintf(`SELECT messageType, COUNT(*) FROM %s WHERE messageType != 49 GROUP BY messageType`, tbl)
 			rows, err := db.QueryContext(ctx, q2)
 			if err == nil {
 				for rows.Next() {
-					var t int64; var cnt int64
+					var t int64
+					var cnt int64
 					if err := rows.Scan(&t, &cnt); err == nil {
 						label := mapV4TypeToLabel(t)
-						if label != "" { stats.ByType[label] += cnt }
+						if label != "" {
+							stats.ByType[label] += cnt
+						}
 					}
 				}
 				rows.Close()
@@ -801,12 +889,21 @@ func (ds *DataSource) GlobalMessageStats(ctx context.Context) (*model.GlobalMess
 								i2 := strings.Index(lc[i1+6:], "</type>")
 								if i1 >= 0 && i2 > 0 {
 									val := lc[i1+6 : i1+6+i2]
-									if strings.TrimSpace(val) == "6" { stats.ByType["文件消息"]++; continue }
-									if strings.TrimSpace(val) == "5" || strings.TrimSpace(val) == "33" { stats.ByType["链接消息"]++; continue }
+									if strings.TrimSpace(val) == "6" {
+										stats.ByType["文件消息"]++
+										continue
+									}
+									if strings.TrimSpace(val) == "5" || strings.TrimSpace(val) == "33" {
+										stats.ByType["链接消息"]++
+										continue
+									}
 								}
 							}
 						}
-						if strings.Contains(lc, "http://") || strings.Contains(lc, "https://") { stats.ByType["链接消息"]++; continue }
+						if strings.Contains(lc, "http://") || strings.Contains(lc, "https://") {
+							stats.ByType["链接消息"]++
+							continue
+						}
 						stats.ByType["XML消息"]++
 					}
 				}
@@ -837,18 +934,26 @@ func (ds *DataSource) GroupMessageCounts(ctx context.Context) (map[string]int64,
 	}
 	// 遍历消息库，按表计数并映射回 username
 	dbs, err := ds.dbm.GetDBs(Message)
-	if err != nil { return result, nil }
+	if err != nil {
+		return result, nil
+	}
 	for _, db := range dbs {
 		trows, err := db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Chat_%' AND name NOT LIKE '%_dels'`)
-		if err != nil { continue }
+		if err != nil {
+			continue
+		}
 		for trows.Next() {
 			var tbl string
-			if err := trows.Scan(&tbl); err != nil { continue }
+			if err := trows.Scan(&tbl); err != nil {
+				continue
+			}
 			var cnt int64
 			q := fmt.Sprintf(`SELECT COUNT(*) FROM %s`, tbl)
 			if err := db.QueryRowContext(ctx, q).Scan(&cnt); err == nil {
 				key := tbl
-				if uname, ok := mapping[tbl]; ok { key = uname }
+				if uname, ok := mapping[tbl]; ok {
+					key = uname
+				}
 				result[key] += cnt
 			}
 		}
@@ -883,20 +988,89 @@ func (ds *DataSource) GroupTodayMessageCounts(ctx context.Context) (map[string]i
 
 	// 遍历消息库
 	dbs, err := ds.dbm.GetDBs(Message)
-	if err != nil { return result, nil }
+	if err != nil {
+		return result, nil
+	}
 	for _, db := range dbs {
 		trows, err := db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Chat_%' AND name NOT LIKE '%_dels'`)
-		if err != nil { continue }
+		if err != nil {
+			continue
+		}
 		for trows.Next() {
 			var tbl string
-			if err := trows.Scan(&tbl); err != nil { continue }
+			if err := trows.Scan(&tbl); err != nil {
+				continue
+			}
 			q := fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE msgCreateTime >= ?`, tbl)
 			var cnt int64
 			if err := db.QueryRowContext(ctx, q, since).Scan(&cnt); err == nil {
 				key := tbl
-				if uname, ok := mapping[tbl]; ok { key = uname }
+				if uname, ok := mapping[tbl]; ok {
+					key = uname
+				}
 				result[key] += cnt
 			}
+		}
+		trows.Close()
+	}
+	return result, nil
+}
+
+// GroupTodayHourly 统计群聊今日按小时消息数（Darwin v3）
+func (ds *DataSource) GroupTodayHourly(ctx context.Context) (map[string][24]int64, error) {
+	result := make(map[string][24]int64)
+	mapping := make(map[string]string)
+	if cdb, err := ds.dbm.GetDB(ChatRoom); err == nil {
+		rows, err := cdb.QueryContext(ctx, `SELECT IFNULL(m_nsUsrName,"" ) FROM GroupContact`)
+		if err == nil {
+			for rows.Next() {
+				var uname string
+				if rows.Scan(&uname) == nil && uname != "" {
+					sum := md5.Sum([]byte(uname))
+					mapping["Chat_"+hex.EncodeToString(sum[:])] = uname
+				}
+			}
+			rows.Close()
+		}
+	}
+	dbs, err := ds.dbm.GetDBs(Message)
+	if err != nil {
+		return result, nil
+	}
+	now := time.Now()
+	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).Unix()
+	end := start + 86400
+	for _, db := range dbs {
+		trows, err := db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Chat_%' AND name NOT LIKE '%_dels'`)
+		if err != nil {
+			continue
+		}
+		for trows.Next() {
+			var tbl string
+			if trows.Scan(&tbl) != nil {
+				continue
+			}
+			q := fmt.Sprintf(`SELECT CAST(strftime('%%H', datetime(msgCreateTime,'unixepoch')) AS INTEGER) AS h, COUNT(*) FROM %s WHERE msgCreateTime >= ? AND msgCreateTime < ? GROUP BY h`, tbl)
+			rows, err := db.QueryContext(ctx, q, start, end)
+			if err != nil {
+				continue
+			}
+			key := tbl
+			if uname, ok := mapping[tbl]; ok {
+				key = uname
+			}
+			for rows.Next() {
+				var hour int
+				var cnt int64
+				if rows.Scan(&hour, &cnt) == nil {
+					if hour >= 0 && hour < 24 {
+						bucket := result[key]
+						bucket[hour] += cnt
+						result[key] = bucket
+					}
+				}
+			}
+			rows.Close()
 		}
 		trows.Close()
 	}
@@ -924,20 +1098,30 @@ func (ds *DataSource) GroupWeekMessageCount(ctx context.Context) (int64, error) 
 	now := time.Now()
 	wday := int(now.Weekday())
 	offset := wday - 1
-	if wday == 0 { offset = -6 }
-	monday := time.Date(now.Year(), now.Month(), now.Day(), 0,0,0,0, now.Location()).AddDate(0,0,-offset)
+	if wday == 0 {
+		offset = -6
+	}
+	monday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).AddDate(0, 0, -offset)
 	since := monday.Unix()
 	dbs, err := ds.dbm.GetDBs(Message)
-	if err != nil { return 0, nil }
+	if err != nil {
+		return 0, nil
+	}
 	for _, db := range dbs {
 		trows, err := db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Chat_%' AND name NOT LIKE '%_dels'`)
-		if err != nil { continue }
+		if err != nil {
+			continue
+		}
 		for trows.Next() {
 			var tbl string
-			if trows.Scan(&tbl) != nil { continue }
+			if trows.Scan(&tbl) != nil {
+				continue
+			}
 			q := fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE msgCreateTime >= ?`, tbl)
 			var cnt int64
-			if db.QueryRowContext(ctx, q, since).Scan(&cnt) == nil { total += cnt }
+			if db.QueryRowContext(ctx, q, since).Scan(&cnt) == nil {
+				total += cnt
+			}
 		}
 		trows.Close()
 	}
@@ -948,12 +1132,21 @@ func (ds *DataSource) GroupWeekMessageCount(ctx context.Context) (int64, error) 
 func (ds *DataSource) MonthlyTrend(ctx context.Context, months int) ([]model.MonthlyTrend, error) {
 	agg := make(map[string][2]int64)
 	dbs, err := ds.dbm.GetDBs(Message)
-	if err != nil { return []model.MonthlyTrend{}, nil }
+	if err != nil {
+		return []model.MonthlyTrend{}, nil
+	}
 	for _, db := range dbs {
 		trows, err := db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Chat_%' AND name NOT LIKE '%_dels'`)
-		if err != nil { continue }
+		if err != nil {
+			continue
+		}
 		var tables []string
-		for trows.Next() { var name string; if err := trows.Scan(&name); err == nil { tables = append(tables, name) } }
+		for trows.Next() {
+			var name string
+			if err := trows.Scan(&name); err == nil {
+				tables = append(tables, name)
+			}
+		}
 		trows.Close()
 		for _, tbl := range tables {
 			q := fmt.Sprintf(`SELECT strftime('%%Y-%%m', datetime(msgCreateTime, 'unixepoch')) AS ym,
@@ -961,12 +1154,16 @@ func (ds *DataSource) MonthlyTrend(ctx context.Context, months int) ([]model.Mon
 				SUM(CASE WHEN mesDes!=0 THEN 1 ELSE 0 END) AS recv
 				FROM %s GROUP BY ym ORDER BY ym`, tbl)
 			rows, err := db.QueryContext(ctx, q)
-			if err != nil { continue }
+			if err != nil {
+				continue
+			}
 			for rows.Next() {
-				var ym string; var sent, recv int64
+				var ym string
+				var sent, recv int64
 				if err := rows.Scan(&ym, &sent, &recv); err == nil {
 					cur := agg[ym]
-					cur[0] += sent; cur[1] += recv
+					cur[0] += sent
+					cur[1] += recv
 					agg[ym] = cur
 				}
 			}
@@ -975,10 +1172,15 @@ func (ds *DataSource) MonthlyTrend(ctx context.Context, months int) ([]model.Mon
 	}
 	// 排序输出
 	keys := make([]string, 0, len(agg))
-	for k := range agg { keys = append(keys, k) }
+	for k := range agg {
+		keys = append(keys, k)
+	}
 	sort.Strings(keys)
 	trends := make([]model.MonthlyTrend, 0, len(keys))
-	for _, k := range keys { v := agg[k]; trends = append(trends, model.MonthlyTrend{Date: k, Sent: v[0], Received: v[1]}) }
+	for _, k := range keys {
+		v := agg[k]
+		trends = append(trends, model.MonthlyTrend{Date: k, Sent: v[0], Received: v[1]})
+	}
 	return trends, nil
 }
 
@@ -989,27 +1191,87 @@ func (ds *DataSource) GroupMessageTypeStats(ctx context.Context) (map[string]int
 	mapping := make(map[string]string)
 	if cdb, err := ds.dbm.GetDB(ChatRoom); err == nil {
 		if rows, err2 := cdb.QueryContext(ctx, `SELECT IFNULL(m_nsUsrName,"") FROM GroupContact`); err2 == nil {
-			for rows.Next() { var uname string; if rows.Scan(&uname)==nil && uname!="" { sum := md5.Sum([]byte(uname)); mapping["Chat_"+hex.EncodeToString(sum[:])] = uname } }
+			for rows.Next() {
+				var uname string
+				if rows.Scan(&uname) == nil && uname != "" {
+					sum := md5.Sum([]byte(uname))
+					mapping["Chat_"+hex.EncodeToString(sum[:])] = uname
+				}
+			}
 			rows.Close()
 		}
 	}
 	dbs, err := ds.dbm.GetDBs(Message)
-	if err != nil { return result, nil }
+	if err != nil {
+		return result, nil
+	}
 	for _, db := range dbs {
 		trows, err := db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Chat_%' AND name NOT LIKE '%_dels'`)
-		if err != nil { continue }
+		if err != nil {
+			continue
+		}
 		var tables []string
-		for trows.Next() { var name string; if trows.Scan(&name)==nil { tables = append(tables, name) } }
+		for trows.Next() {
+			var name string
+			if trows.Scan(&name) == nil {
+				tables = append(tables, name)
+			}
+		}
 		trows.Close()
-		for _, tbl := range tables { if _, ok := mapping[tbl]; !ok { continue }
+		for _, tbl := range tables {
+			if _, ok := mapping[tbl]; !ok {
+				continue
+			}
 			// 非49
 			q := fmt.Sprintf(`SELECT messageType, COUNT(*) FROM %s WHERE messageType != 49 GROUP BY messageType`, tbl)
 			rows, err2 := db.QueryContext(ctx, q)
-			if err2 == nil { for rows.Next(){ var t int64; var cnt int64; if rows.Scan(&t,&cnt)==nil { label := mapV4TypeToLabel(t); if label!="" { result[label]+=cnt } } }; rows.Close() }
+			if err2 == nil {
+				for rows.Next() {
+					var t int64
+					var cnt int64
+					if rows.Scan(&t, &cnt) == nil {
+						label := mapV4TypeToLabel(t)
+						if label != "" {
+							result[label] += cnt
+						}
+					}
+				}
+				rows.Close()
+			}
 			// 49
 			q49 := fmt.Sprintf(`SELECT msgContent FROM %s WHERE messageType = 49`, tbl)
 			orows, err3 := db.QueryContext(ctx, q49)
-			if err3 == nil { for orows.Next(){ var mc string; if orows.Scan(&mc)==nil { lc := strings.ToLower(mc); if strings.Contains(lc,"<appmsg"){ if strings.Contains(lc,"<type>") && strings.Contains(lc,"</type>"){ i1:=strings.Index(lc,"<type>"); i2:=strings.Index(lc[i1+6:],"</type>"); if i1>=0 && i2>0 { val := strings.TrimSpace(lc[i1+6:i1+6+i2]); if val=="6" { result["文件消息"]++; continue }; if val=="5" || val=="33" { result["链接消息"]++; continue } } } }; if strings.Contains(lc,"http://") || strings.Contains(lc,"https://") { result["链接消息"]++; continue }; result["XML消息"]++ } }; orows.Close() }
+			if err3 == nil {
+				for orows.Next() {
+					var mc string
+					if orows.Scan(&mc) == nil {
+						lc := strings.ToLower(mc)
+						if strings.Contains(lc, "<appmsg") {
+							if strings.Contains(lc, "<type>") && strings.Contains(lc, "</type>") {
+								i1 := strings.Index(lc, "<type>")
+								i2 := strings.Index(lc[i1+6:], "</type>")
+								if i1 >= 0 && i2 > 0 {
+									val := strings.TrimSpace(lc[i1+6 : i1+6+i2])
+									if val == "6" {
+										result["文件消息"]++
+										continue
+									}
+									if val == "5" || val == "33" {
+										result["链接消息"]++
+										continue
+									}
+								}
+							}
+						}
+						if strings.Contains(lc, "http://") || strings.Contains(lc, "https://") {
+							result["链接消息"]++
+							continue
+						}
+						result["XML消息"]++
+					}
+				}
+				orows.Close()
+			}
 		}
 	}
 	return result, nil
@@ -1019,22 +1281,38 @@ func (ds *DataSource) GroupMessageTypeStats(ctx context.Context) (map[string]int
 func (ds *DataSource) Heatmap(ctx context.Context) ([24][7]int64, error) {
 	var grid [24][7]int64
 	dbs, err := ds.dbm.GetDBs(Message)
-	if err != nil { return grid, nil }
+	if err != nil {
+		return grid, nil
+	}
 	for _, db := range dbs {
 		trows, err := db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Chat_%' AND name NOT LIKE '%_dels'`)
-		if err != nil { continue }
+		if err != nil {
+			continue
+		}
 		var tables []string
-		for trows.Next() { var name string; if err := trows.Scan(&name); err == nil { tables = append(tables, name) } }
+		for trows.Next() {
+			var name string
+			if err := trows.Scan(&name); err == nil {
+				tables = append(tables, name)
+			}
+		}
 		trows.Close()
 		for _, tbl := range tables {
 			q := fmt.Sprintf(`SELECT CAST(strftime('%%H', datetime(msgCreateTime,'unixepoch')) AS INTEGER) AS h,
 				CAST(strftime('%%w', datetime(msgCreateTime,'unixepoch')) AS INTEGER) AS d,
 				COUNT(*) FROM %s GROUP BY h,d`, tbl)
 			rows, err := db.QueryContext(ctx, q)
-			if err != nil { continue }
+			if err != nil {
+				continue
+			}
 			for rows.Next() {
-				var h, d int; var cnt int64
-				if err := rows.Scan(&h, &d, &cnt); err == nil { if h>=0 && h<24 && d>=0 && d<7 { grid[h][d] += cnt } }
+				var h, d int
+				var cnt int64
+				if err := rows.Scan(&h, &d, &cnt); err == nil {
+					if h >= 0 && h < 24 && d >= 0 && d < 7 {
+						grid[h][d] += cnt
+					}
+				}
 			}
 			rows.Close()
 		}
@@ -1046,21 +1324,40 @@ func (ds *DataSource) Heatmap(ctx context.Context) ([24][7]int64, error) {
 func (ds *DataSource) GlobalTodayHourly(ctx context.Context) ([24]int64, error) {
 	var hours [24]int64
 	dbs, err := ds.dbm.GetDBs(Message)
-	if err != nil { return hours, nil }
+	if err != nil {
+		return hours, nil
+	}
 	now := time.Now()
-	start := time.Date(now.Year(), now.Month(), now.Day(), 0,0,0,0, now.Location()).Unix()
+	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).Unix()
 	end := start + 86400
 	for _, db := range dbs {
 		trows, err := db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Chat_%' AND name NOT LIKE '%_dels'`)
-		if err != nil { continue }
+		if err != nil {
+			continue
+		}
 		var tables []string
-		for trows.Next() { var name string; if trows.Scan(&name) == nil { tables = append(tables, name) } }
+		for trows.Next() {
+			var name string
+			if trows.Scan(&name) == nil {
+				tables = append(tables, name)
+			}
+		}
 		trows.Close()
 		for _, tbl := range tables {
 			q := fmt.Sprintf(`SELECT CAST(strftime('%%H', datetime(msgCreateTime,'unixepoch')) AS INTEGER) AS h, COUNT(*) FROM %s WHERE msgCreateTime >= ? AND msgCreateTime < ? GROUP BY h`, tbl)
 			rows, err := db.QueryContext(ctx, q, start, end)
-			if err != nil { continue }
-			for rows.Next() { var h int; var cnt int64; if rows.Scan(&h,&cnt)==nil { if h>=0 && h<24 { hours[h]+=cnt } } }
+			if err != nil {
+				continue
+			}
+			for rows.Next() {
+				var h int
+				var cnt int64
+				if rows.Scan(&h, &cnt) == nil {
+					if h >= 0 && h < 24 {
+						hours[h] += cnt
+					}
+				}
+			}
 			rows.Close()
 		}
 	}
