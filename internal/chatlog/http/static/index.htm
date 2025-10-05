@@ -94,6 +94,29 @@
                 margin-bottom: 18px;
             }
 
+            .date-range {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                flex-wrap: wrap;
+            }
+
+            .date-range input[type="date"] {
+                flex: 1 1 160px;
+                min-width: 140px;
+            }
+
+            .date-separator {
+                color: #666;
+                font-weight: 600;
+            }
+
+            .form-hint {
+                margin-top: 6px;
+                font-size: 12px;
+                color: #777;
+            }
+
             label {
                 display: block;
                 margin-bottom: 6px;
@@ -381,23 +404,19 @@
                     <div class="tab-content" id="diary-tab">
                         <div class="api-description">
                             <p>
-                                查询最近N小时我参与过的会话全部消息（可选：24h、48h、72h）。<span
+                                选择某一天导出当日我参与过的会话全部消息。<span
                                     class="badge"
                                     >GET /api/v1/diary</span
                                 >
                             </p>
                         </div>
                         <div class="form-group">
-                            <label for="diary-hours"
-                                >时间范围：<span class="optional-param"
-                                    >可选</span
+                            <label for="diary-date"
+                                >选择日期：<span class="required-field"
+                                    >*</span
                                 ></label
                             >
-                            <select id="diary-hours">
-                                <option value="24" selected>24h</option>
-                                <option value="48">48h</option>
-                                <option value="72">72h</option>
-                            </select>
+                            <input type="date" id="diary-date" />
                         </div>
                         <div class="form-group">
                             <label for="diary-talker"
@@ -510,16 +529,19 @@
                             </p>
                         </div>
                         <div class="form-group">
-                            <label for="time"
+                            <label for="start-date"
                                 >时间范围：<span class="required-field"
                                     >*</span
                                 ></label
                             >
-                            <input
-                                type="text"
-                                id="time"
-                                placeholder="例如：2023-01-01 或 2023-01-01~2023-01-31"
-                            />
+                            <div class="date-range">
+                                <input type="date" id="start-date" />
+                                <span class="date-separator">至</span>
+                                <input type="date" id="end-date" />
+                            </div>
+                            <div class="form-hint">
+                                请选择开始日期，结束日期可选，默认为同一天
+                            </div>
                         </div>
                         <div class="form-group">
                             <label for="talker"
@@ -730,8 +752,10 @@
                         switch (activeTab) {
                             case "chatlog":
                                 url += "chatlog";
-                                const time =
-                                    document.getElementById("time").value;
+                                const startDate =
+                                    document.getElementById("start-date").value;
+                                const endDate =
+                                    document.getElementById("end-date").value;
                                 const talker =
                                     document.getElementById("talker").value;
                                 const sender =
@@ -745,15 +769,45 @@
                                 const format =
                                     document.getElementById("format").value;
 
-                                // 验证必填项：仅时间
-                                if (!time) {
+                                // 验证必填项：开始日期
+                                if (!startDate && !endDate) {
                                     errorMessage.textContent =
-                                        "错误: 时间范围为必填项！";
+                                        "错误: 请至少选择开始日期！";
                                     errorMessage.style.display = "block";
                                     return;
                                 }
 
-                                if (time) params.append("time", time);
+                                if (!startDate && endDate) {
+                                    errorMessage.textContent =
+                                        "错误: 请先选择开始日期！";
+                                    errorMessage.style.display = "block";
+                                    return;
+                                }
+
+                                let timeValue = "";
+
+                                if (startDate && endDate) {
+                                    if (
+                                        new Date(startDate) > new Date(endDate)
+                                    ) {
+                                        errorMessage.textContent =
+                                            "错误: 结束日期不能早于开始日期！";
+                                        errorMessage.style.display = "block";
+                                        return;
+                                    }
+                                    timeValue = `${startDate}~${endDate}`;
+                                } else if (startDate) {
+                                    timeValue = startDate;
+                                }
+
+                                if (!timeValue) {
+                                    errorMessage.textContent =
+                                        "错误: 时间范围不合法！";
+                                    errorMessage.style.display = "block";
+                                    return;
+                                }
+
+                                params.append("time", timeValue);
                                 // talker 可为空，留空表示全部按会话分组
                                 if (talker) params.append("talker", talker);
                                 if (sender) params.append("sender", sender);
@@ -809,10 +863,11 @@
                                 break;
                             case "diary":
                                 url += "diary";
-                                const diaryHours =
-                                    document.getElementById(
-                                        "diary-hours"
-                                    ).value;
+                                const diaryDateInput =
+                                    document.getElementById("diary-date");
+                                const diaryDate = diaryDateInput
+                                    ? diaryDateInput.value
+                                    : "";
                                 const diaryTalker =
                                     document.getElementById(
                                         "diary-talker"
@@ -821,8 +876,15 @@
                                     document.getElementById(
                                         "diary-format"
                                     ).value;
-                                if (diaryHours)
-                                    params.append("hours", diaryHours);
+
+                                if (!diaryDate) {
+                                    errorMessage.textContent =
+                                        "错误: 请选择日期！";
+                                    errorMessage.style.display = "block";
+                                    return;
+                                }
+
+                                params.append("date", diaryDate);
                                 if (diaryTalker)
                                     params.append("talker", diaryTalker);
                                 if (diaryFormat)
@@ -883,6 +945,19 @@
                         console.error("API查询出错:", error);
                     }
                 });
+
+            const diaryDateInput = document.getElementById("diary-date");
+            if (diaryDateInput) {
+                const today = new Date();
+                const yyyy = today.getFullYear();
+                const mm = String(today.getMonth() + 1).padStart(2, "0");
+                const dd = String(today.getDate()).padStart(2, "0");
+                const todayStr = `${yyyy}-${mm}-${dd}`;
+                diaryDateInput.max = todayStr;
+                if (!diaryDateInput.value) {
+                    diaryDateInput.value = todayStr;
+                }
+            }
 
             // 复制结果功能
             document
