@@ -547,7 +547,7 @@ func (ds *DataSource) SearchMessages(ctx context.Context, req *model.SearchReque
 					args = append(args, talker)
 				}
 
-				insertSQL := fmt.Sprintf(`INSERT INTO chatlog_msg_base(seq, content)
+				insertSQL := fmt.Sprintf(`INSERT OR IGNORE INTO chatlog_msg_base(seq, content)
 					SELECT Sequence, StrContent FROM MSG WHERE %s`, strings.Join(conditions, " AND "))
 				if _, err := tx.ExecContext(ctx, insertSQL, args...); err != nil {
 					return errors.QueryFailed("insert temp base", err)

@@ -511,7 +511,7 @@ func (ds *DataSource) SearchMessages(ctx context.Context, req *model.SearchReque
 					return errors.QueryFailed("cleanup temp table", err)
 				}
 
-				insertSQL := fmt.Sprintf(`INSERT INTO chatlog_msg_base(seq, content)
+				insertSQL := fmt.Sprintf(`INSERT OR IGNORE INTO chatlog_msg_base(seq, content)
 					SELECT sort_seq, CAST(message_content AS TEXT)
 					FROM %s
 					WHERE create_time >= ? AND create_time <= ?
