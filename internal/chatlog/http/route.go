@@ -76,6 +76,7 @@ func (s *Service) initAPIRouter() {
 		api.GET("/session", s.handleSessions)
 		api.GET("/diary", s.handleDiary)
 		api.GET("/dashboard", s.handleDashboard)
+		api.GET("/search", s.handleSearch)
 	}
 }
 
@@ -85,7 +86,6 @@ func (s *Service) initMCPRouter() {
 	s.router.Any("/message", func(c *gin.Context) { s.mcpSSEServer.ServeHTTP(c.Writer, c.Request) })
 }
 
-// handleDashboard 返回真实统计数据的仪表盘 JSON
 // GET /api/v1/dashboard
 func (s *Service) handleDashboard(c *gin.Context) {
 	// 基础聚合
@@ -710,6 +710,115 @@ func estimateDBSize(workDir string) int64 {
 		return nil
 	})
 	return total
+}
+
+func (s *Service) handleSearch(c *gin.Context) {
+	params := struct {
+		Query  string `form:"q"`
+		Talker string `form:"talker"`
+		Sender string `form:"sender"`
+		Time   string `form:"time"`
+		Start  string `form:"start"`
+		End    string `form:"end"`
+		Limit  int    `form:"limit"`
+		Offset int    `form:"offset"`
+	}{}
+
+	if err := c.BindQuery(&params); err != nil {
+		errors.Err(c, err)
+		return
+	}
+
+	query := strings.TrimSpace(params.Query)
+	if query == "" {
+		errors.Err(c, errors.InvalidArg("q"))
+		return
+	}
+
+	talker := strings.TrimSpace(params.Talker)
+	if talker == "" {
+		errors.Err(c, errors.ErrTalkerEmpty)
+		return
+	}
+
+	limit := params.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	offset := params.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	req := &model.SearchRequest{
+		Query:  query,
+		Talker: talker,
+		Sender: strings.TrimSpace(params.Sender),
+		Limit:  limit,
+		Offset: offset,
+	}
+
+	if params.Time != "" {
+		start, end, ok := util.TimeRangeOf(params.Time)
+		if !ok {
+			errors.Err(c, errors.InvalidArg("time"))
+			return
+		}
+		req.Start = start
+		req.End = end
+	} else {
+		if params.Start != "" && params.End != "" {
+			start, end, ok := util.TimeRangeOf(params.Start + "~" + params.End)
+			if !ok {
+				errors.Err(c, errors.InvalidArg("time"))
+				return
+			}
+			req.Start = start
+			req.End = end
+		} else if params.Start != "" {
+			start, end, ok := util.TimeRangeOf(params.Start)
+			if !ok {
+				errors.Err(c, errors.InvalidArg("start"))
+				return
+			}
+			req.Start = start
+			req.End = end
+		} else if params.End != "" {
+			start, end, ok := util.TimeRangeOf(params.End)
+			if !ok {
+				errors.Err(c, errors.InvalidArg("end"))
+				return
+			}
+			req.Start = start
+			req.End = end
+		}
+	}
+
+	if !req.Start.IsZero() && !req.End.IsZero() && req.End.Before(req.Start) {
+		req.Start, req.End = req.End, req.Start
+	}
+
+	resp, err := s.db.SearchMessages(req)
+	if err != nil {
+		errors.Err(c, err)
+		return
+	}
+	if resp == nil {
+		resp = &model.SearchResponse{Hits: []*model.SearchHit{}, Limit: limit, Offset: offset}
+	}
+
+	resp.Query = req.Query
+	resp.Talker = req.Talker
+	resp.Sender = req.Sender
+	resp.Start = req.Start
+	resp.End = req.End
+	resp.Limit = limit
+	resp.Offset = offset
+
+	c.JSON(http.StatusOK, resp)
 }
 
 func (s *Service) handleChatlog(c *gin.Context) {

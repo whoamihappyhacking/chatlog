@@ -70,6 +70,11 @@ func (w *DB) GetMessages(start, end time.Time, talker string, sender string, key
 	return messages, nil
 }
 
+func (w *DB) SearchMessages(req *model.SearchRequest) (*model.SearchResponse, error) {
+	ctx := context.Background()
+	return w.repo.SearchMessages(ctx, req)
+}
+
 type GetContactsResp struct {
 	Items []*model.Contact `json:"items"`
 }

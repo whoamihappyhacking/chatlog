@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"regexp"
 	"sort"
 	"strings"
@@ -366,6 +367,281 @@ func (ds *DataSource) GetMessages(ctx context.Context, startTime, endTime time.T
 	}
 
 	return filteredMessages, nil
+}
+
+func (ds *DataSource) SearchMessages(ctx context.Context, req *model.SearchRequest) (*model.SearchResponse, error) {
+	if req == nil {
+		return nil, errors.InvalidArg("request")
+	}
+
+	ftsQuery := util.BuildFTSQuery(req.Query)
+	if ftsQuery == "" {
+		return &model.SearchResponse{
+			Total:      0,
+			Hits:       []*model.SearchHit{},
+			DurationMs: 0,
+			Limit:      req.Limit,
+			Offset:     req.Offset,
+			Query:      req.Query,
+			Talker:     req.Talker,
+			Sender:     req.Sender,
+			Start:      req.Start,
+			End:        req.End,
+		}, nil
+	}
+
+	talkers := util.Str2List(req.Talker, ",")
+	if len(talkers) == 0 {
+		return nil, errors.ErrTalkerEmpty
+	}
+
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	offset := req.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	req.Limit = limit
+	req.Offset = offset
+
+	budget := limit + offset + 20
+	if budget < 50 {
+		budget = 50
+	}
+	if budget > 1000 {
+		budget = 1000
+	}
+
+	startRange := req.Start
+	endRange := req.End
+	if startRange.IsZero() {
+		startRange = time.Unix(0, 0)
+	}
+	if endRange.IsZero() {
+		endRange = time.Now().Add(24 * time.Hour)
+	}
+	if endRange.Before(startRange) {
+		startRange, endRange = endRange, startRange
+	}
+
+	startUnix := int64(0)
+	if !req.Start.IsZero() {
+		startUnix = req.Start.Unix()
+	}
+	endUnix := int64(math.MaxInt64)
+	if !req.End.IsZero() {
+		endUnix = req.End.Unix()
+	}
+	if endUnix < startUnix {
+		startUnix, endUnix = endUnix, startUnix
+	}
+
+	senders := util.Str2List(req.Sender, ",")
+	senderFilter := len(senders) > 0
+	senderSet := make(map[string]struct{}, len(senders))
+	for _, s := range senders {
+		senderSet[s] = struct{}{}
+	}
+
+	startTs := time.Now()
+	allHits := make([]*model.SearchHit, 0, limit+offset)
+	seenSeq := make(map[int64]struct{})
+
+	dbInfos := ds.getDBInfosForTimeRange(startRange, endRange)
+	if len(dbInfos) == 0 {
+		return &model.SearchResponse{
+			Total:      0,
+			Hits:       []*model.SearchHit{},
+			DurationMs: time.Since(startTs).Milliseconds(),
+			Limit:      limit,
+			Offset:     offset,
+			Query:      req.Query,
+			Talker:     req.Talker,
+			Sender:     req.Sender,
+			Start:      req.Start,
+			End:        req.End,
+		}, nil
+	}
+
+	for _, dbInfo := range dbInfos {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
+		db, err := ds.dbm.OpenDB(dbInfo.FilePath)
+		if err != nil {
+			log.Err(err).Msgf("数据库 %s 未打开", dbInfo.FilePath)
+			continue
+		}
+
+		for _, talker := range talkers {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+
+			err := func() error {
+				tx, err := db.BeginTx(ctx, nil)
+				if err != nil {
+					return errors.QueryFailed("begin tx", err)
+				}
+				defer func() {
+					_ = tx.Rollback()
+				}()
+
+				talkerHash := md5.Sum([]byte(talker))
+				tableName := "Msg_" + hex.EncodeToString(talkerHash[:])
+
+				var exists int
+				if err := tx.QueryRowContext(ctx, `SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`, tableName).Scan(&exists); err != nil {
+					if err == sql.ErrNoRows {
+						return nil
+					}
+					return errors.QueryFailed("check table", err)
+				}
+
+				if _, err := tx.ExecContext(ctx, `CREATE TEMP TABLE IF NOT EXISTS chatlog_msg_base(seq INTEGER PRIMARY KEY, content TEXT)`); err != nil {
+					return errors.QueryFailed("create temp table", err)
+				}
+				if _, err := tx.ExecContext(ctx, `DELETE FROM chatlog_msg_base`); err != nil {
+					return errors.QueryFailed("cleanup temp table", err)
+				}
+
+				insertSQL := fmt.Sprintf(`INSERT INTO chatlog_msg_base(seq, content)
+					SELECT sort_seq, CAST(message_content AS TEXT)
+					FROM %s
+					WHERE create_time >= ? AND create_time <= ?
+					  AND message_content IS NOT NULL AND LENGTH(message_content) > 0`, tableName)
+				if _, err := tx.ExecContext(ctx, insertSQL, startUnix, endUnix); err != nil {
+					return errors.QueryFailed("insert temp base", err)
+				}
+
+				if _, err := tx.ExecContext(ctx, `CREATE VIRTUAL TABLE IF NOT EXISTS temp.chatlog_msg_fts USING fts5(content, tokenize='unicode61')`); err != nil {
+					return errors.QueryFailed("create fts", err)
+				}
+				if _, err := tx.ExecContext(ctx, `DELETE FROM temp.chatlog_msg_fts`); err != nil {
+					return errors.QueryFailed("cleanup fts", err)
+				}
+				if _, err := tx.ExecContext(ctx, `INSERT INTO temp.chatlog_msg_fts(rowid, content) SELECT seq, content FROM chatlog_msg_base`); err != nil {
+					return errors.QueryFailed("insert fts", err)
+				}
+
+				querySQL := fmt.Sprintf(`
+					SELECT m.sort_seq, m.server_id, m.local_type, n.user_name,
+					       m.create_time, m.message_content, m.packed_info_data, m.status,
+					       highlight(chatlog_msg_fts, 0, '<mark>', '</mark>') AS snippet,
+					       bm25(chatlog_msg_fts) AS score
+					FROM temp.chatlog_msg_fts
+					JOIN %s AS m ON m.sort_seq = chatlog_msg_fts.rowid
+					LEFT JOIN Name2Id n ON m.real_sender_id = n.rowid
+					WHERE chatlog_msg_fts MATCH ?
+					ORDER BY score
+					LIMIT ?
+				`, tableName)
+
+				rows, err := tx.QueryContext(ctx, querySQL, ftsQuery, budget)
+				if err != nil {
+					return errors.QueryFailed("fts query", err)
+				}
+				defer rows.Close()
+
+				for rows.Next() {
+					var msg model.MessageV4
+					var messageContent []byte
+					var snippet sql.NullString
+					var score sql.NullFloat64
+					if err := rows.Scan(&msg.SortSeq, &msg.ServerID, &msg.LocalType, &msg.UserName,
+						&msg.CreateTime, &messageContent, &msg.PackedInfoData, &msg.Status, &snippet, &score); err != nil {
+						return errors.ScanRowFailed(err)
+					}
+					msg.MessageContent = messageContent
+
+					message := msg.Wrap(talker)
+					if senderFilter {
+						if _, ok := senderSet[message.Sender]; !ok {
+							continue
+						}
+					}
+					if _, dup := seenSeq[message.Seq]; dup {
+						continue
+					}
+					seenSeq[message.Seq] = struct{}{}
+
+					hitSnippet := ""
+					if snippet.Valid {
+						hitSnippet = snippet.String
+					}
+					hitScore := 0.0
+					if score.Valid {
+						hitScore = score.Float64
+					}
+					allHits = append(allHits, &model.SearchHit{Message: message, Snippet: hitSnippet, Score: hitScore})
+				}
+
+				if err := rows.Err(); err != nil {
+					return errors.QueryFailed("fts rows", err)
+				}
+
+				if err := tx.Commit(); err != nil {
+					return errors.QueryFailed("commit tx", err)
+				}
+				return nil
+			}()
+
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	if len(allHits) == 0 {
+		return &model.SearchResponse{
+			Total:      0,
+			Hits:       []*model.SearchHit{},
+			DurationMs: time.Since(startTs).Milliseconds(),
+			Limit:      limit,
+			Offset:     offset,
+			Query:      req.Query,
+			Talker:     req.Talker,
+			Sender:     req.Sender,
+			Start:      req.Start,
+			End:        req.End,
+		}, nil
+	}
+
+	sort.SliceStable(allHits, func(i, j int) bool {
+		if allHits[i].Score == allHits[j].Score {
+			return allHits[i].Message.Seq < allHits[j].Message.Seq
+		}
+		return allHits[i].Score < allHits[j].Score
+	})
+
+	total := len(allHits)
+	if offset > total {
+		offset = total
+	}
+	endIndex := offset + limit
+	if endIndex > total {
+		endIndex = total
+	}
+	paged := allHits[offset:endIndex]
+
+	return &model.SearchResponse{
+		Total:      total,
+		Hits:       paged,
+		DurationMs: time.Since(startTs).Milliseconds(),
+		Limit:      limit,
+		Offset:     offset,
+		Query:      req.Query,
+		Talker:     req.Talker,
+		Sender:     req.Sender,
+		Start:      req.Start,
+		End:        req.End,
+	}, nil
 }
 
 // 联系人

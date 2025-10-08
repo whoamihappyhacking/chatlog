@@ -65,3 +65,7 @@ func InitCacheFailed(cause error) *Error {
 func FileGroupNotFound(name string) *Error {
 	return Newf(nil, http.StatusNotFound, "file group not found: %s", name).WithStack()
 }
+
+func SearchNotSupported(platform string, version int) *Error {
+	return Newf(nil, http.StatusNotImplemented, "search not supported for %s v%d", platform, version).WithStack()
+}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/sjzar/chatlog/internal/chatlog/conf"
 	"github.com/sjzar/chatlog/internal/chatlog/webhook"
+	"github.com/sjzar/chatlog/internal/errors"
 	"github.com/sjzar/chatlog/internal/model"
 	"github.com/sjzar/chatlog/internal/wechatdb"
 )
@@ -98,6 +99,13 @@ func (s *Service) GetWorkDir() string {
 
 func (s *Service) GetMessages(start, end time.Time, talker string, sender string, keyword string, limit, offset int) ([]*model.Message, error) {
 	return s.db.GetMessages(start, end, talker, sender, keyword, limit, offset)
+}
+
+func (s *Service) SearchMessages(req *model.SearchRequest) (*model.SearchResponse, error) {
+	if s.db == nil {
+		return nil, errors.InvalidArg("search before db ready")
+	}
+	return s.db.SearchMessages(req)
 }
 
 func (s *Service) GetContacts(key string, limit, offset int) (*wechatdb.GetContactsResp, error) {

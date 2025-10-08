@@ -1,1041 +1,1188 @@
 <!DOCTYPE html>
 <html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Chatlog</title>
-        <style>
-            :root {
-                --primary-color: #3498db;
-                --primary-dark: #2980b9;
-                --success-color: #2ecc71;
-                --success-dark: #27ae60;
-                --error-color: #e74c3c;
-                --bg-light: #f5f5f5;
-                --bg-white: #ffffff;
-                --text-color: #333333;
-                --border-color: #dddddd;
-            }
-
-            body {
-                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
-                    Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans",
-                    "Helvetica Neue", sans-serif;
-                line-height: 1.6;
-                color: var(--text-color);
-                max-width: 1200px;
-                margin: 0 auto;
-                padding: 20px;
-                background-color: #fafafa;
-            }
-
-            .container {
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                width: 100%;
-            }
-
-            .welcome-text {
-                text-align: center;
-                margin-bottom: 30px;
-            }
-
-            .api-section {
-                background-color: var(--bg-light);
-                border-radius: 10px;
-                padding: 25px;
-                width: 100%;
-                max-width: 850px;
-                margin-bottom: 30px;
-                box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
-            }
-
-            h1 {
-                color: #2c3e50;
-                margin-bottom: 15px;
-            }
-
-            h2 {
-                color: var(--primary-color);
-                margin-top: 20px;
-                border-bottom: 2px solid var(--primary-color);
-                padding-bottom: 8px;
-                display: inline-block;
-            }
-
-            h3 {
-                margin-top: 20px;
-                color: #34495e;
-            }
-
-            .docs-link {
-                color: var(--primary-color);
-                text-decoration: none;
-                font-weight: bold;
-                transition: all 0.2s ease;
-            }
-
-            .docs-link:hover {
-                text-decoration: underline;
-                color: var(--primary-dark);
-            }
-
-            .api-tester {
-                background-color: var(--bg-white);
-                border: 1px solid var(--border-color);
-                border-radius: 10px;
-                padding: 25px;
-                margin-top: 20px;
-                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
-            }
-
-            .form-group {
-                margin-bottom: 18px;
-            }
-
-            .date-range {
-                display: flex;
-                align-items: center;
-                gap: 10px;
-                flex-wrap: wrap;
-            }
-
-            .date-range input[type="date"] {
-                flex: 1 1 160px;
-                min-width: 140px;
-            }
-
-            .date-separator {
-                color: #666;
-                font-weight: 600;
-            }
-
-            .form-hint {
-                margin-top: 6px;
-                font-size: 12px;
-                color: #777;
-            }
-
-            label {
-                display: block;
-                margin-bottom: 6px;
-                font-weight: 600;
-                color: #34495e;
-            }
-
-            input,
-            select,
-            textarea {
-                width: 100%;
-                padding: 10px 12px;
-                border: 1px solid #ddd;
-                border-radius: 6px;
-                box-sizing: border-box;
-                font-size: 14px;
-                transition: all 0.3s;
-            }
-
-            input:focus,
-            select:focus,
-            textarea:focus {
-                outline: none;
-                border-color: var(--primary-color);
-                box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
-            }
-
-            input::placeholder,
-            textarea::placeholder {
-                color: #aaa;
-            }
-
-            button {
-                background-color: var(--primary-color);
-                color: white;
-                border: none;
-                padding: 12px 18px;
-                border-radius: 6px;
-                cursor: pointer;
-                font-size: 16px;
-                font-weight: 500;
-                transition: all 0.3s;
-                display: inline-flex;
-                align-items: center;
-                justify-content: center;
-            }
-
-            button:hover {
-                background-color: var(--primary-dark);
-                transform: translateY(-1px);
-                box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-            }
-
-            button:active {
-                transform: translateY(0);
-            }
-
-            .result-container {
-                margin-top: 20px;
-                border: 1px solid var(--border-color);
-                border-radius: 6px;
-                padding: 15px;
-                background-color: #f9f9f9;
-                max-height: 400px;
-                overflow-y: auto;
-                white-space: pre-wrap;
-                font-family: "SFMono-Regular", Consolas, "Liberation Mono",
-                    Menlo, monospace;
-                font-size: 14px;
-                line-height: 1.5;
-                position: relative;
-            }
-
-            .request-url {
-                background-color: #f0f0f0;
-                padding: 10px;
-                border-radius: 6px;
-                margin-bottom: 10px;
-                font-family: "SFMono-Regular", Consolas, "Liberation Mono",
-                    Menlo, monospace;
-                font-size: 14px;
-                word-break: break-all;
-                border: 1px dashed #ccc;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-            }
-
-            .url-text {
-                flex-grow: 1;
-                margin-right: 10px;
-            }
-
-            .copy-url-button {
-                background-color: #9b59b6;
-                padding: 6px 12px;
-                font-size: 12px;
-                white-space: nowrap;
-            }
-
-            .loading {
-                text-align: center;
-                padding: 20px;
-                color: #666;
-            }
-
-            .loading::after {
-                content: "...";
-                animation: dots 1.5s steps(5, end) infinite;
-            }
-
-            @keyframes dots {
-                0%,
-                20% {
-                    content: ".";
-                }
-                40% {
-                    content: "..";
-                }
-                60% {
-                    content: "...";
-                }
-                80%,
-                100% {
-                    content: "";
-                }
-            }
-
-            .tab-container {
-                display: flex;
-                margin-bottom: 20px;
-                border-bottom: 1px solid #e0e0e0;
-            }
-
-            .tab {
-                padding: 12px 20px;
-                cursor: pointer;
-                margin-right: 5px;
-                border-radius: 6px 6px 0 0;
-                font-weight: 500;
-                transition: all 0.2s;
-                border: 1px solid transparent;
-                border-bottom: none;
-                position: relative;
-                bottom: -1px;
-            }
-
-            .tab:hover {
-                background-color: #f0f8ff;
-            }
-
-            .tab.active {
-                background-color: var(--bg-white);
-                border-color: #e0e0e0;
-                color: var(--primary-color);
-                border-bottom: 1px solid white;
-            }
-
-            .tab-content {
-                display: none;
-                padding: 20px 0;
-            }
-
-            .tab-content.active {
-                display: block;
-                animation: fadeIn 0.3s;
-            }
-
-            @keyframes fadeIn {
-                from {
-                    opacity: 0;
-                }
-                to {
-                    opacity: 1;
-                }
-            }
-
-            .button-group {
-                display: flex;
-                justify-content: flex-end;
-                margin-top: 20px;
-            }
-
-            .copy-button {
-                background-color: var(--success-color);
-                padding: 8px 15px;
-                font-size: 14px;
-                margin-left: 10px;
-            }
-
-            .copy-button:hover {
-                background-color: var(--success-dark);
-            }
-
-            .error-message {
-                color: var(--error-color);
-                font-weight: bold;
-                margin-top: 10px;
-                padding: 10px;
-                border-radius: 4px;
-                background-color: rgba(231, 76, 60, 0.1);
-                border-left: 4px solid var(--error-color);
-                display: none;
-            }
-
-            .api-description {
-                margin-bottom: 15px;
-                color: #555;
-            }
-
-            .badge {
-                display: inline-block;
-                padding: 3px 8px;
-                border-radius: 12px;
-                font-size: 12px;
-                font-weight: 600;
-                margin-left: 8px;
-                background-color: rgba(52, 152, 219, 0.1);
-                color: var(--primary-color);
-            }
-
-            .optional-param {
-                font-size: 12px;
-                color: #777;
-                margin-left: 5px;
-                font-style: italic;
-            }
-
-            .required-field {
-                color: var(--error-color);
-                font-weight: bold;
-            }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="welcome-text">
-                <h1>🎉 恭喜！Chatlog 服务已成功启动</h1>
-                <p>
-                    Chatlog
-                    是一个帮助你轻松使用自己聊天数据的工具，现在你可以通过 HTTP
-                    API 访问你的聊天记录、联系人和群聊信息。
-                </p>
-            </div>
-
-            <div class="api-section">
-                <h2>🔍 API 接口与调试</h2>
-
-                <div class="api-tester">
-                    <div class="tab-container">
-                        <div class="tab active" data-tab="session">
-                            最近会话
-                        </div>
-                        <div class="tab" data-tab="chatroom">群聊</div>
-                        <div class="tab" data-tab="contact">联系人</div>
-                        <div class="tab" data-tab="chatlog">聊天记录</div>
-                        <div class="tab" data-tab="diary">日记</div>
-                    </div>
-
-                    <!-- 会话查询表单 -->
-                    <div class="tab-content active" id="session-tab">
-                        <div class="api-description">
-                            <p>
-                                查询最近会话列表。<span class="badge"
-                                    >GET /api/v1/session</span
-                                >
-                            </p>
-                        </div>
-                        <div class="form-group">
-                            <label for="session-format"
-                                >输出格式：<span class="optional-param"
-                                    >可选</span
-                                ></label
-                            >
-                            <select id="session-format">
-                                <option value="">默认</option>
-                                <option value="json">JSON</option>
-                                <option value="text">纯文本</option>
-                                <option value="html">HTML</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <!-- 日记查询表单 -->
-                    <div class="tab-content" id="diary-tab">
-                        <div class="api-description">
-                            <p>
-                                选择某一天导出当日我参与过的会话全部消息。<span
-                                    class="badge"
-                                    >GET /api/v1/diary</span
-                                >
-                            </p>
-                        </div>
-                        <div class="form-group">
-                            <label for="diary-date"
-                                >选择日期：<span class="required-field"
-                                    >*</span
-                                ></label
-                            >
-                            <input type="date" id="diary-date" />
-                        </div>
-                        <div class="form-group">
-                            <label for="diary-talker"
-                                >聊天对象：<span class="optional-param"
-                                    >可选</span
-                                ></label
-                            >
-                            <input
-                                type="text"
-                                id="diary-talker"
-                                placeholder="wxid、群ID、备注名或昵称（多个用逗号分隔）"
-                            />
-                        </div>
-                        <div class="form-group">
-                            <label for="diary-format"
-                                >输出格式：<span class="optional-param"
-                                    >可选</span
-                                ></label
-                            >
-                            <select id="diary-format">
-                                <option value="">默认</option>
-                                <option value="json">JSON</option>
-                                <option value="text">纯文本</option>
-                                <option value="html">HTML</option>
-                                <option value="csv">CSV</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <!-- 群聊查询表单 -->
-                    <div class="tab-content" id="chatroom-tab">
-                        <div class="api-description">
-                            <p>
-                                查询群聊列表，可选择性地按关键词搜索。<span
-                                    class="badge"
-                                    >GET /api/v1/chatroom</span
-                                >
-                            </p>
-                        </div>
-                        <div class="form-group">
-                            <label for="chatroom-keyword"
-                                >搜索群聊：<span class="optional-param"
-                                    >可选</span
-                                ></label
-                            >
-                            <input
-                                type="text"
-                                id="chatroom-keyword"
-                                placeholder="输入关键词搜索群聊"
-                            />
-                        </div>
-                        <div class="form-group">
-                            <label for="chatroom-format"
-                                >输出格式：<span class="optional-param"
-                                    >可选</span
-                                ></label
-                            >
-                            <select id="chatroom-format">
-                                <option value="">默认</option>
-                                <option value="json">JSON</option>
-                                <option value="text">纯文本</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <!-- 联系人查询表单 -->
-                    <div class="tab-content" id="contact-tab">
-                        <div class="api-description">
-                            <p>
-                                查询联系人列表，可选择性地按关键词搜索。<span
-                                    class="badge"
-                                    >GET /api/v1/contact</span
-                                >
-                            </p>
-                        </div>
-                        <div class="form-group">
-                            <label for="contact-keyword"
-                                >搜索联系人：<span class="optional-param"
-                                    >可选</span
-                                ></label
-                            >
-                            <input
-                                type="text"
-                                id="contact-keyword"
-                                placeholder="输入关键词搜索联系人"
-                            />
-                        </div>
-                        <div class="form-group">
-                            <label for="contact-format"
-                                >输出格式：<span class="optional-param"
-                                    >可选</span
-                                ></label
-                            >
-                            <select id="contact-format">
-                                <option value="">默认</option>
-                                <option value="json">JSON</option>
-                                <option value="text">纯文本</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <!-- 聊天记录查询表单 -->
-                    <div class="tab-content" id="chatlog-tab">
-                        <div class="api-description">
-                            <p>
-                                查询指定时间范围内与特定联系人或群聊的聊天记录。<span
-                                    class="badge"
-                                    >GET /api/v1/chatlog</span
-                                >
-                            </p>
-                        </div>
-                        <div class="form-group">
-                            <label for="start-date"
-                                >时间范围：<span class="required-field"
-                                    >*</span
-                                ></label
-                            >
-                            <div class="date-range">
-                                <input type="date" id="start-date" />
-                                <span class="date-separator">至</span>
-                                <input type="date" id="end-date" />
-                            </div>
-                            <div class="form-hint">
-                                请选择开始日期，结束日期可选，默认为同一天
-                            </div>
-                        </div>
-                        <div class="form-group">
-                            <label for="talker"
-                                >聊天对象：<span class="optional-param"
-                                    >可选</span
-                                ></label
-                            >
-                            <input
-                                type="text"
-                                id="talker"
-                                placeholder="wxid、群ID、备注名或昵称 (留空输出所有)"
-                            />
-                        </div>
-                        <div class="form-group">
-                            <label for="sender"
-                                >发送者：<span class="optional-param"
-                                    >可选</span
-                                ></label
-                            >
-                            <input
-                                type="text"
-                                id="sender"
-                                placeholder="指定消息发送者"
-                            />
-                        </div>
-                        <div class="form-group">
-                            <label for="keyword"
-                                >关键词：<span class="optional-param"
-                                    >可选</span
-                                ></label
-                            >
-                            <input
-                                type="text"
-                                id="keyword"
-                                placeholder="搜索消息内容中的关键词"
-                            />
-                        </div>
-                        <div class="form-group">
-                            <label for="limit"
-                                >返回数量：<span class="optional-param"
-                                    >可选</span
-                                ></label
-                            >
-                            <input
-                                type="number"
-                                id="limit"
-                                placeholder="默认不做限制"
-                            />
-                        </div>
-                        <div class="form-group">
-                            <label for="offset"
-                                >偏移量：<span class="optional-param"
-                                    >可选</span
-                                ></label
-                            >
-                            <input
-                                type="number"
-                                id="offset"
-                                placeholder="默认 0"
-                            />
-                        </div>
-                        <div class="form-group">
-                            <label for="format"
-                                >输出格式：<span class="optional-param"
-                                    >可选</span
-                                ></label
-                            >
-                            <select id="format">
-                                <option value="">默认</option>
-                                <option value="text">纯文本</option>
-                                <option value="json">JSON</option>
-                                <option value="csv">CSV</option>
-                                <option value="html">HTML</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <button id="test-api">执行查询</button>
-
-                    <div
-                        id="result-wrapper"
-                        style="display: none; margin-top: 20px"
-                    >
-                        <div class="request-url" id="request-url-container">
-                            <span class="url-text" id="request-url"></span>
-                            <button
-                                class="copy-button copy-url-button"
-                                id="copy-url"
-                            >
-                                复制请求URL
-                            </button>
-                        </div>
-                        <div class="result-container" id="api-result">
-                            <p>查询结果将显示在这里...</p>
-                        </div>
-                        <div class="button-group">
-                            <button class="copy-button" id="copy-result">
-                                复制结果
-                            </button>
-                        </div>
-                    </div>
-                    <div class="error-message" id="error-message"></div>
-                </div>
-            </div>
-
-            <div class="api-section">
-                <h2>🤖 MCP 集成</h2>
-                <p>
-                    Chatlog 支持 MCP (Model Context Protocol) SSE 协议，可与支持
-                    MCP 的 AI 助手无缝集成。
-                </p>
-                <p>SSE 端点：<strong>/sse</strong></p>
-                <p>
-                    详细集成指南请参考
-                    <a
-                        href="https://github.com/sjzar/chatlog/blob/main/docs/mcp.md"
-                        class="docs-link"
-                        target="_blank"
-                        >MCP 集成指南</a
-                    >
-                </p>
-            </div>
-
-            <div class="api-section">
-                <h2>📚 更多资源</h2>
-                <p>
-                    查看
-                    <a
-                        href="https://github.com/sjzar/chatlog"
-                        class="docs-link"
-                        target="_blank"
-                        >GitHub 项目</a
-                    >
-                    获取完整文档和使用指南。
-                </p>
-                <p>
-                    如果你有任何问题或建议，欢迎通过
-                    <a
-                        href="https://github.com/sjzar/chatlog/discussions"
-                        class="docs-link"
-                        target="_blank"
-                        >Discussions</a
-                    >
-                    进行交流。
-                </p>
-            </div>
-        </div>
-
-        <script>
-            // 标签切换功能
-            document.querySelectorAll(".tab").forEach((tab) => {
-                tab.addEventListener("click", function () {
-                    // 移除所有标签的活动状态
-                    document
-                        .querySelectorAll(".tab")
-                        .forEach((t) => t.classList.remove("active"));
-                    // 设置当前标签为活动状态
-                    this.classList.add("active");
-
-                    // 隐藏所有内容区域
-                    document
-                        .querySelectorAll(".tab-content")
-                        .forEach((content) => {
-                            content.classList.remove("active");
-                        });
-
-                    // 显示当前标签对应的内容
-                    const tabId = this.getAttribute("data-tab") + "-tab";
-                    document.getElementById(tabId).classList.add("active");
-
-                    // 清空结果区域
-                    document.getElementById("result-wrapper").style.display =
-                        "none";
-                    document.getElementById("api-result").innerHTML =
-                        "<p>查询结果将显示在这里...</p>";
-                    document.getElementById("request-url").textContent = "";
-                    document.getElementById("error-message").style.display =
-                        "none";
-                    document.getElementById("error-message").textContent = "";
-                });
-            });
-
-            // API 测试功能
-            document
-                .getElementById("test-api")
-                .addEventListener("click", async function () {
-                    const resultContainer =
-                        document.getElementById("api-result");
-                    const requestUrlContainer =
-                        document.getElementById("request-url");
-                    const errorMessage =
-                        document.getElementById("error-message");
-                    const resultWrapper =
-                        document.getElementById("result-wrapper");
-
-                    errorMessage.style.display = "none";
-                    errorMessage.textContent = "";
-
-                    try {
-                        // 获取当前活动的标签
-                        const activeTab = document
-                            .querySelector(".tab.active")
-                            .getAttribute("data-tab");
-                        let url = "/api/v1/";
-                        let params = new URLSearchParams();
-
-                        // 根据不同的标签构建不同的请求
-                        switch (activeTab) {
-                            case "chatlog":
-                                url += "chatlog";
-                                const startDate =
-                                    document.getElementById("start-date").value;
-                                const endDate =
-                                    document.getElementById("end-date").value;
-                                const talker =
-                                    document.getElementById("talker").value;
-                                const sender =
-                                    document.getElementById("sender").value;
-                                const keyword =
-                                    document.getElementById("keyword").value;
-                                const limit =
-                                    document.getElementById("limit").value;
-                                const offset =
-                                    document.getElementById("offset").value;
-                                const format =
-                                    document.getElementById("format").value;
-
-                                // 验证必填项：开始日期
-                                if (!startDate && !endDate) {
-                                    errorMessage.textContent =
-                                        "错误: 请至少选择开始日期！";
-                                    errorMessage.style.display = "block";
-                                    return;
-                                }
-
-                                if (!startDate && endDate) {
-                                    errorMessage.textContent =
-                                        "错误: 请先选择开始日期！";
-                                    errorMessage.style.display = "block";
-                                    return;
-                                }
-
-                                let timeValue = "";
-
-                                if (startDate && endDate) {
-                                    if (
-                                        new Date(startDate) > new Date(endDate)
-                                    ) {
-                                        errorMessage.textContent =
-                                            "错误: 结束日期不能早于开始日期！";
-                                        errorMessage.style.display = "block";
-                                        return;
-                                    }
-                                    timeValue = `${startDate}~${endDate}`;
-                                } else if (startDate) {
-                                    timeValue = startDate;
-                                }
-
-                                if (!timeValue) {
-                                    errorMessage.textContent =
-                                        "错误: 时间范围不合法！";
-                                    errorMessage.style.display = "block";
-                                    return;
-                                }
-
-                                params.append("time", timeValue);
-                                // talker 可为空，留空表示全部按会话分组
-                                if (talker) params.append("talker", talker);
-                                if (sender) params.append("sender", sender);
-                                if (keyword) params.append("keyword", keyword);
-                                if (limit) params.append("limit", limit);
-                                if (offset) params.append("offset", offset);
-                                if (format) params.append("format", format);
-                                break;
-
-                            case "contact":
-                                url += "contact";
-                                const contactKeyword =
-                                    document.getElementById(
-                                        "contact-keyword"
-                                    ).value;
-                                const contactFormat =
-                                    document.getElementById(
-                                        "contact-format"
-                                    ).value;
-
-                                if (contactKeyword)
-                                    params.append("keyword", contactKeyword);
-                                if (contactFormat)
-                                    params.append("format", contactFormat);
-                                break;
-
-                            case "chatroom":
-                                url += "chatroom";
-                                const chatroomKeyword =
-                                    document.getElementById(
-                                        "chatroom-keyword"
-                                    ).value;
-                                const chatroomFormat =
-                                    document.getElementById(
-                                        "chatroom-format"
-                                    ).value;
-
-                                if (chatroomKeyword)
-                                    params.append("keyword", chatroomKeyword);
-                                if (chatroomFormat)
-                                    params.append("format", chatroomFormat);
-                                break;
-
-                            case "session":
-                                url += "session";
-                                const sessionFormat =
-                                    document.getElementById(
-                                        "session-format"
-                                    ).value;
-
-                                if (sessionFormat)
-                                    params.append("format", sessionFormat);
-                                break;
-                            case "diary":
-                                url += "diary";
-                                const diaryDateInput =
-                                    document.getElementById("diary-date");
-                                const diaryDate = diaryDateInput
-                                    ? diaryDateInput.value
-                                    : "";
-                                const diaryTalker =
-                                    document.getElementById(
-                                        "diary-talker"
-                                    ).value;
-                                const diaryFormat =
-                                    document.getElementById(
-                                        "diary-format"
-                                    ).value;
-
-                                if (!diaryDate) {
-                                    errorMessage.textContent =
-                                        "错误: 请选择日期！";
-                                    errorMessage.style.display = "block";
-                                    return;
-                                }
-
-                                params.append("date", diaryDate);
-                                if (diaryTalker)
-                                    params.append("talker", diaryTalker);
-                                if (diaryFormat)
-                                    params.append("format", diaryFormat);
-                                break;
-                        }
-
-                        // 添加参数到URL
-                        const apiUrl = params.toString()
-                            ? `${url}?${params.toString()}`
-                            : url;
-
-                        // 获取完整URL（包含域名部分）
-                        const fullUrl = window.location.origin + apiUrl;
-
-                        // 显示完整请求URL
-                        requestUrlContainer.textContent = fullUrl;
-                        resultWrapper.style.display = "block";
-
-                        // 显示加载中
-                        resultContainer.innerHTML =
-                            '<div class="loading">加载中</div>';
-
-                        // 发送请求
-                        const response = await fetch(apiUrl);
-
-                        if (!response.ok) {
-                            throw new Error(
-                                `HTTP error! Status: ${response.status}`
-                            );
-                        }
-
-                        // 获取响应内容类型
-                        const contentType =
-                            response.headers.get("content-type");
-                        let result;
-
-                        if (
-                            contentType &&
-                            contentType.includes("application/json")
-                        ) {
-                            // 如果是JSON，格式化显示
-                            result = await response.json();
-                            resultContainer.innerHTML = JSON.stringify(
-                                result,
-                                null,
-                                2
-                            );
-                        } else {
-                            // 其他格式直接显示文本
-                            result = await response.text();
-                            resultContainer.innerHTML = result;
-                        }
-                    } catch (error) {
-                        resultContainer.innerHTML = "";
-                        errorMessage.textContent = `查询出错: ${error.message}`;
-                        errorMessage.style.display = "block";
-                        console.error("API查询出错:", error);
-                    }
-                });
-
-            const diaryDateInput = document.getElementById("diary-date");
-            if (diaryDateInput) {
-                const today = new Date();
-                const yyyy = today.getFullYear();
-                const mm = String(today.getMonth() + 1).padStart(2, "0");
-                const dd = String(today.getDate()).padStart(2, "0");
-                const todayStr = `${yyyy}-${mm}-${dd}`;
-                diaryDateInput.max = todayStr;
-                if (!diaryDateInput.value) {
-                    diaryDateInput.value = todayStr;
-                }
-            }
-
-            // 复制结果功能
-            document
-                .getElementById("copy-result")
-                .addEventListener("click", function () {
-                    const resultText =
-                        document.getElementById("api-result").innerText;
-                    copyToClipboard(resultText, this, "已复制结果!");
-                });
-
-            // 复制URL功能
-            document
-                .getElementById("copy-url")
-                .addEventListener("click", function () {
-                    // 获取完整URL（包含域名部分）
-                    const urlText =
-                        document.getElementById("request-url").innerText;
-                    copyToClipboard(urlText, this, "已复制URL!");
-                });
-
-            // 通用复制功能（支持非安全上下文的回退方案）
-            function copyToClipboard(text, button, successMessage) {
-                const originalText = button.textContent;
-                const toast = (msg) => {
-                    button.textContent = msg;
-                    setTimeout(() => {
-                        button.textContent = originalText;
-                    }, 2000);
-                };
-
-                // 无可复制内容
-                if (!text || text.trim() === "") {
-                    toast("无可复制内容");
-                    return;
-                }
-
-                // 现代 API，要求安全上下文（https 或 localhost）
-                if (navigator.clipboard && window.isSecureContext) {
-                    navigator.clipboard
-                        .writeText(text)
-                        .then(() => {
-                            toast(successMessage);
-                        })
-                        .catch((err) => {
-                            // 失败时尝试回退
-                            const ok = fallbackCopyTextToClipboard(text);
-                            toast(ok ? successMessage : "复制失败");
-                            if (!ok) console.error("复制失败:", err);
-                        });
-                    return;
-                }
-
-                // 非安全上下文或不支持 navigator.clipboard 时，使用回退方案
-                const ok = fallbackCopyTextToClipboard(text);
-                toast(ok ? successMessage : "复制失败");
-            }
-
-            // 回退复制方案：创建隐藏 textarea，使用 execCommand('copy')
-            function fallbackCopyTextToClipboard(text) {
-                try {
-                    const textarea = document.createElement("textarea");
-                    textarea.value = text;
-                    // 避免页面滚动抖动
-                    textarea.style.position = "fixed";
-                    textarea.style.top = "-9999px";
-                    textarea.style.left = "-9999px";
-                    textarea.setAttribute("readonly", "");
-                    document.body.appendChild(textarea);
-                    textarea.focus();
-                    textarea.select();
-                    const ok = document.execCommand("copy");
-                    document.body.removeChild(textarea);
-                    return ok;
-                } catch (e) {
-                    console.error("回退复制失败:", e);
-                    return false;
-                }
-            }
-        </script>
-    </body>
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Chatlog</title>
+		<style>
+			:root {
+				--primary-color: #3498db;
+				--primary-dark: #2980b9;
+				--success-color: #2ecc71;
+				--success-dark: #27ae60;
+				--error-color: #e74c3c;
+				--bg-light: #f5f5f5;
+				--bg-white: #ffffff;
+				--text-color: #333333;
+				--border-color: #dddddd;
+			}
+
+			body {
+				font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+					Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans",
+					"Helvetica Neue", sans-serif;
+				line-height: 1.6;
+				color: var(--text-color);
+				max-width: 1200px;
+				margin: 0 auto;
+				padding: 20px;
+				background-color: #fafafa;
+			}
+
+			.container {
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				width: 100%;
+			}
+
+			.welcome-text {
+				text-align: center;
+				margin-bottom: 30px;
+			}
+
+			.api-section {
+				background-color: var(--bg-light);
+				border-radius: 10px;
+				padding: 25px;
+				width: 100%;
+				max-width: 850px;
+				margin-bottom: 30px;
+				box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+			}
+
+			h1 {
+				color: #2c3e50;
+				margin-bottom: 15px;
+			}
+
+			h2 {
+				color: var(--primary-color);
+				margin-top: 20px;
+				border-bottom: 2px solid var(--primary-color);
+				padding-bottom: 8px;
+				display: inline-block;
+			}
+
+			h3 {
+				margin-top: 20px;
+				color: #34495e;
+			}
+
+			.docs-link {
+				color: var(--primary-color);
+				text-decoration: none;
+				font-weight: bold;
+				transition: all 0.2s ease;
+			}
+
+			.docs-link:hover {
+				text-decoration: underline;
+				color: var(--primary-dark);
+			}
+
+			.api-tester {
+				background-color: var(--bg-white);
+				border: 1px solid var(--border-color);
+				border-radius: 10px;
+				padding: 25px;
+				margin-top: 20px;
+				box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+			}
+
+			.form-group {
+				margin-bottom: 18px;
+			}
+
+			.date-range {
+				display: flex;
+				align-items: center;
+				gap: 10px;
+				flex-wrap: wrap;
+			}
+
+			.date-range input[type="date"] {
+				flex: 1 1 160px;
+				min-width: 140px;
+			}
+
+			.date-separator {
+				color: #666;
+				font-weight: 600;
+			}
+
+			.form-hint {
+				margin-top: 6px;
+				font-size: 12px;
+				color: #777;
+			}
+
+			label {
+				display: block;
+				margin-bottom: 6px;
+				font-weight: 600;
+				color: #34495e;
+			}
+
+			input,
+			select,
+			textarea {
+				width: 100%;
+				padding: 10px 12px;
+				border: 1px solid #ddd;
+				border-radius: 6px;
+				box-sizing: border-box;
+				font-size: 14px;
+				transition: all 0.3s;
+			}
+
+			input:focus,
+			select:focus,
+			textarea:focus {
+				outline: none;
+				border-color: var(--primary-color);
+				box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
+			}
+
+			input::placeholder,
+			textarea::placeholder {
+				color: #aaa;
+			}
+
+			button {
+				background-color: var(--primary-color);
+				color: white;
+				border: none;
+				padding: 12px 18px;
+				border-radius: 6px;
+				cursor: pointer;
+				font-size: 16px;
+				font-weight: 500;
+				transition: all 0.3s;
+				display: inline-flex;
+				align-items: center;
+				justify-content: center;
+			}
+
+			button:hover {
+				background-color: var(--primary-dark);
+				transform: translateY(-1px);
+				box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+			}
+
+			button:active {
+				transform: translateY(0);
+			}
+
+			.result-container {
+				margin-top: 20px;
+				border: 1px solid var(--border-color);
+				border-radius: 6px;
+				padding: 15px;
+				background-color: #f9f9f9;
+				max-height: 400px;
+				overflow-y: auto;
+				white-space: pre-wrap;
+				font-family: "SFMono-Regular", Consolas, "Liberation Mono",
+					Menlo, monospace;
+				font-size: 14px;
+				line-height: 1.5;
+				position: relative;
+			}
+
+			.request-url {
+				background-color: #f0f0f0;
+				padding: 10px;
+				border-radius: 6px;
+				margin-bottom: 10px;
+				font-family: "SFMono-Regular", Consolas, "Liberation Mono",
+					Menlo, monospace;
+				font-size: 14px;
+				word-break: break-all;
+				border: 1px dashed #ccc;
+				display: flex;
+				justify-content: space-between;
+				align-items: center;
+			}
+
+			.url-text {
+				flex-grow: 1;
+				margin-right: 10px;
+			}
+
+			.copy-url-button {
+				background-color: #9b59b6;
+				padding: 6px 12px;
+				font-size: 12px;
+				white-space: nowrap;
+			}
+
+			.loading {
+				text-align: center;
+				padding: 20px;
+				color: #666;
+			}
+
+			.loading::after {
+				content: "...";
+				animation: dots 1.5s steps(5, end) infinite;
+			}
+
+			@keyframes dots {
+				0%,
+				20% {
+					content: ".";
+				}
+				40% {
+					content: "..";
+				}
+				60% {
+					content: "...";
+				}
+				80%,
+				100% {
+					content: "";
+				}
+			}
+
+			.tab-container {
+				display: flex;
+				margin-bottom: 20px;
+				border-bottom: 1px solid #e0e0e0;
+			}
+
+			.tab {
+				padding: 12px 20px;
+				cursor: pointer;
+				margin-right: 5px;
+				border-radius: 6px 6px 0 0;
+				font-weight: 500;
+				transition: all 0.2s;
+				border: 1px solid transparent;
+				border-bottom: none;
+				position: relative;
+				bottom: -1px;
+			}
+
+			.tab:hover {
+				background-color: #f0f8ff;
+			}
+
+			.tab.active {
+				background-color: var(--bg-white);
+				border-color: #e0e0e0;
+				color: var(--primary-color);
+				border-bottom: 1px solid white;
+			}
+
+			.tab-content {
+				display: none;
+				padding: 20px 0;
+			}
+
+			.tab-content.active {
+				display: block;
+				animation: fadeIn 0.3s;
+			}
+
+			@keyframes fadeIn {
+				from {
+					opacity: 0;
+				}
+				to {
+					opacity: 1;
+				}
+			}
+
+			.button-group {
+				display: flex;
+				justify-content: flex-end;
+				margin-top: 20px;
+			}
+
+			.copy-button {
+				background-color: var(--success-color);
+				padding: 8px 15px;
+				font-size: 14px;
+				margin-left: 10px;
+			}
+
+			.copy-button:hover {
+				background-color: var(--success-dark);
+			}
+
+			.error-message {
+				color: var(--error-color);
+				font-weight: bold;
+				margin-top: 10px;
+				padding: 10px;
+				border-radius: 4px;
+				background-color: rgba(231, 76, 60, 0.1);
+				border-left: 4px solid var(--error-color);
+				display: none;
+			}
+
+			.api-description {
+				margin-bottom: 15px;
+				color: #555;
+			}
+
+			.badge {
+				display: inline-block;
+				padding: 3px 8px;
+				border-radius: 12px;
+				font-size: 12px;
+				font-weight: 600;
+				margin-left: 8px;
+				background-color: rgba(52, 152, 219, 0.1);
+				color: var(--primary-color);
+			}
+
+			.optional-param {
+				font-size: 12px;
+				color: #777;
+				margin-left: 5px;
+				font-style: italic;
+			}
+
+			.required-field {
+				color: var(--error-color);
+				font-weight: bold;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="container">
+			<div class="welcome-text">
+				<h1>🎉 恭喜！Chatlog 服务已成功启动</h1>
+				<p>
+					Chatlog
+					是一个帮助你轻松使用自己聊天数据的工具，现在你可以通过 HTTP
+					API 访问你的聊天记录、联系人和群聊信息。
+				</p>
+			</div>
+
+			<div class="api-section">
+				<h2>🔍 API 接口与调试</h2>
+
+				<div class="api-tester">
+					<div class="tab-container">
+						<div class="tab active" data-tab="session">
+							最近会话
+						</div>
+						<div class="tab" data-tab="chatroom">群聊</div>
+						<div class="tab" data-tab="contact">联系人</div>
+						<div class="tab" data-tab="chatlog">聊天记录</div>
+						<div class="tab" data-tab="search">搜索</div>
+						<div class="tab" data-tab="diary">日记</div>
+					</div>
+
+					<!-- 会话查询表单 -->
+					<div class="tab-content active" id="session-tab">
+						<div class="api-description">
+							<p>
+								查询最近会话列表。<span class="badge"
+									>GET /api/v1/session</span
+								>
+							</p>
+						</div>
+						<div class="form-group">
+							<label for="session-format"
+								>输出格式：<span class="optional-param"
+									>可选</span
+								></label
+							>
+							<select id="session-format">
+								<option value="">默认</option>
+								<option value="json">JSON</option>
+								<option value="text">纯文本</option>
+								<option value="html">HTML</option>
+							</select>
+						</div>
+					</div>
+
+					<!-- 日记查询表单 -->
+					<div class="tab-content" id="diary-tab">
+						<div class="api-description">
+							<p>
+								选择某一天导出当日我参与过的会话全部消息。<span
+									class="badge"
+									>GET /api/v1/diary</span
+								>
+							</p>
+						</div>
+						<div class="form-group">
+							<label for="diary-date"
+								>选择日期：<span class="required-field"
+									>*</span
+								></label
+							>
+							<input type="date" id="diary-date" />
+						</div>
+						<div class="form-group">
+							<label for="diary-talker"
+								>聊天对象：<span class="optional-param"
+									>可选</span
+								></label
+							>
+							<input
+								type="text"
+								id="diary-talker"
+								placeholder="wxid、群ID、备注名或昵称（多个用逗号分隔）"
+							/>
+						</div>
+						<div class="form-group">
+							<label for="diary-format"
+								>输出格式：<span class="optional-param"
+									>可选</span
+								></label
+							>
+							<select id="diary-format">
+								<option value="">默认</option>
+								<option value="json">JSON</option>
+								<option value="text">纯文本</option>
+								<option value="html">HTML</option>
+								<option value="csv">CSV</option>
+							</select>
+						</div>
+					</div>
+
+					<!-- 群聊查询表单 -->
+					<div class="tab-content" id="chatroom-tab">
+						<div class="api-description">
+							<p>
+								查询群聊列表，可选择性地按关键词搜索。<span
+									class="badge"
+									>GET /api/v1/chatroom</span
+								>
+							</p>
+						</div>
+						<div class="form-group">
+							<label for="chatroom-keyword"
+								>搜索群聊：<span class="optional-param"
+									>可选</span
+								></label
+							>
+							<input
+								type="text"
+								id="chatroom-keyword"
+								placeholder="输入关键词搜索群聊"
+							/>
+						</div>
+						<div class="form-group">
+							<label for="chatroom-format"
+								>输出格式：<span class="optional-param"
+									>可选</span
+								></label
+							>
+							<select id="chatroom-format">
+								<option value="">默认</option>
+								<option value="json">JSON</option>
+								<option value="text">纯文本</option>
+							</select>
+						</div>
+					</div>
+
+					<!-- 联系人查询表单 -->
+					<div class="tab-content" id="contact-tab">
+						<div class="api-description">
+							<p>
+								查询联系人列表，可选择性地按关键词搜索。<span
+									class="badge"
+									>GET /api/v1/contact</span
+								>
+							</p>
+						</div>
+						<div class="form-group">
+							<label for="contact-keyword"
+								>搜索联系人：<span class="optional-param"
+									>可选</span
+								></label
+							>
+							<input
+								type="text"
+								id="contact-keyword"
+								placeholder="输入关键词搜索联系人"
+							/>
+						</div>
+						<div class="form-group">
+							<label for="contact-format"
+								>输出格式：<span class="optional-param"
+									>可选</span
+								></label
+							>
+							<select id="contact-format">
+								<option value="">默认</option>
+								<option value="json">JSON</option>
+								<option value="text">纯文本</option>
+							</select>
+						</div>
+					</div>
+
+					<!-- 聊天记录查询表单 -->
+					<div class="tab-content" id="chatlog-tab">
+						<div class="api-description">
+							<p>
+								查询指定时间范围内与特定联系人或群聊的聊天记录。<span
+									class="badge"
+									>GET /api/v1/chatlog</span
+								>
+							</p>
+						</div>
+						<div class="form-group">
+							<label for="start-date"
+								>时间范围：<span class="required-field"
+									>*</span
+								></label
+							>
+							<div class="date-range">
+								<input type="date" id="start-date" />
+								<span class="date-separator">至</span>
+								<input type="date" id="end-date" />
+							</div>
+							<div class="form-hint">
+								请选择开始日期，结束日期可选，默认为同一天
+							</div>
+						</div>
+						<div class="form-group">
+							<label for="talker"
+								>聊天对象：<span class="optional-param"
+									>可选</span
+								></label
+							>
+							<input
+								type="text"
+								id="talker"
+								placeholder="wxid、群ID、备注名或昵称 (留空输出所有)"
+							/>
+						</div>
+						<div class="form-group">
+							<label for="sender"
+								>发送者：<span class="optional-param"
+									>可选</span
+								></label
+							>
+							<input
+								type="text"
+								id="sender"
+								placeholder="指定消息发送者"
+							/>
+						</div>
+						<div class="form-group">
+							<label for="keyword"
+								>关键词：<span class="optional-param"
+									>可选</span
+								></label
+							>
+							<input
+								type="text"
+								id="keyword"
+								placeholder="搜索消息内容中的关键词"
+							/>
+						</div>
+						<div class="form-group">
+							<label for="limit"
+								>返回数量：<span class="optional-param"
+									>可选</span
+								></label
+							>
+							<input
+								type="number"
+								id="limit"
+								placeholder="默认不做限制"
+							/>
+						</div>
+						<div class="form-group">
+							<label for="offset"
+								>偏移量：<span class="optional-param"
+									>可选</span
+								></label
+							>
+							<input
+								type="number"
+								id="offset"
+								placeholder="默认 0"
+							/>
+						</div>
+						<div class="form-group">
+							<label for="format"
+								>输出格式：<span class="optional-param"
+									>可选</span
+								></label
+							>
+							<select id="format">
+								<option value="">默认</option>
+								<option value="text">纯文本</option>
+								<option value="json">JSON</option>
+								<option value="csv">CSV</option>
+								<option value="html">HTML</option>
+							</select>
+						</div>
+					</div>
+
+					<!-- 搜索表单 -->
+					<div class="tab-content" id="search-tab">
+						<div class="api-description">
+							<p>
+								使用全文索引在指定会话中查找消息。<span
+									class="badge"
+									>GET /api/v1/search</span
+								>
+							</p>
+						</div>
+						<div class="form-group">
+							<label for="search-query"
+								>关键词：<span class="required-field"
+									>必填</span
+								></label
+							>
+							<input id="search-query" type="text"
+							placeholder="支持空格分词，利用 AND/OR/\"
+							组合高级语法" />
+						</div>
+						<div class="form-group">
+							<label for="search-talker"
+								>会话 ID（可多个，英文逗号分隔）：<span
+									class="required-field"
+									>必填</span
+								></label
+							>
+							<input
+								id="search-talker"
+								type="text"
+								placeholder="例如：wxid_xxx@chatroom"
+							/>
+							<div class="form-hint">
+								可以从“最近会话”或“群聊”接口获取对应的 ID。
+							</div>
+						</div>
+						<div class="form-group">
+							<label for="search-sender"
+								>发送者筛选：<span class="optional-param"
+									>可选</span
+								></label
+							>
+							<input
+								id="search-sender"
+								type="text"
+								placeholder="支持多个发送者，英文逗号分隔"
+							/>
+						</div>
+						<div class="form-group">
+							<label for="search-time"
+								>时间范围：<span class="optional-param"
+									>可选</span
+								></label
+							>
+							<input
+								id="search-time"
+								type="text"
+								placeholder="支持 2024-01-01~2024-01-31、last-30d 等格式"
+							/>
+							<div class="form-hint">
+								留空表示搜索全量消息；支持与聊天记录接口相同的时间表达式。
+							</div>
+						</div>
+						<div class="form-group">
+							<label for="search-limit"
+								>Limit：<span class="optional-param"
+									>可选</span
+								></label
+							>
+							<input
+								id="search-limit"
+								type="number"
+								min="1"
+								max="200"
+								placeholder="默认 20，最大 200"
+							/>
+						</div>
+						<div class="form-group">
+							<label for="search-offset"
+								>Offset：<span class="optional-param"
+									>可选</span
+								></label
+							>
+							<input
+								id="search-offset"
+								type="number"
+								min="0"
+								placeholder="默认 0"
+							/>
+						</div>
+					</div>
+
+					<button id="test-api">执行查询</button>
+
+					<div
+						id="result-wrapper"
+						style="display: none; margin-top: 20px"
+					>
+						<div class="request-url" id="request-url-container">
+							<span class="url-text" id="request-url"></span>
+							<button
+								class="copy-button copy-url-button"
+								id="copy-url"
+							>
+								复制请求URL
+							</button>
+						</div>
+						<div class="result-container" id="api-result">
+							<p>查询结果将显示在这里...</p>
+						</div>
+						<div class="button-group">
+							<button class="copy-button" id="copy-result">
+								复制结果
+							</button>
+						</div>
+					</div>
+					<div class="error-message" id="error-message"></div>
+				</div>
+			</div>
+
+			<div class="api-section">
+				<h2>🤖 MCP 集成</h2>
+				<p>
+					Chatlog 支持 MCP (Model Context Protocol) SSE 协议，可与支持
+					MCP 的 AI 助手无缝集成。
+				</p>
+				<p>SSE 端点：<strong>/sse</strong></p>
+				<p>
+					详细集成指南请参考
+					<a
+						href="https://github.com/sjzar/chatlog/blob/main/docs/mcp.md"
+						class="docs-link"
+						target="_blank"
+						>MCP 集成指南</a
+					>
+				</p>
+			</div>
+
+			<div class="api-section">
+				<h2>📚 更多资源</h2>
+				<p>
+					查看
+					<a
+						href="https://github.com/sjzar/chatlog"
+						class="docs-link"
+						target="_blank"
+						>GitHub 项目</a
+					>
+					获取完整文档和使用指南。
+				</p>
+				<p>
+					如果你有任何问题或建议，欢迎通过
+					<a
+						href="https://github.com/sjzar/chatlog/discussions"
+						class="docs-link"
+						target="_blank"
+						>Discussions</a
+					>
+					进行交流。
+				</p>
+			</div>
+		</div>
+
+		<script>
+			// 标签切换功能
+			document.querySelectorAll(".tab").forEach((tab) => {
+				tab.addEventListener("click", function () {
+					// 移除所有标签的活动状态
+					document
+						.querySelectorAll(".tab")
+						.forEach((t) => t.classList.remove("active"));
+					// 设置当前标签为活动状态
+					this.classList.add("active");
+
+					// 隐藏所有内容区域
+					document
+						.querySelectorAll(".tab-content")
+						.forEach((content) => {
+							content.classList.remove("active");
+						});
+
+					// 显示当前标签对应的内容
+					const tabId = this.getAttribute("data-tab") + "-tab";
+					document.getElementById(tabId).classList.add("active");
+
+					// 清空结果区域
+					document.getElementById("result-wrapper").style.display =
+						"none";
+					document.getElementById("api-result").innerHTML =
+						"<p>查询结果将显示在这里...</p>";
+					document.getElementById("request-url").textContent = "";
+					document.getElementById("error-message").style.display =
+						"none";
+					document.getElementById("error-message").textContent = "";
+				});
+			});
+
+			// API 测试功能
+			document
+				.getElementById("test-api")
+				.addEventListener("click", async function () {
+					const resultContainer =
+						document.getElementById("api-result");
+					const requestUrlContainer =
+						document.getElementById("request-url");
+					const errorMessage =
+						document.getElementById("error-message");
+					const resultWrapper =
+						document.getElementById("result-wrapper");
+
+					errorMessage.style.display = "none";
+					errorMessage.textContent = "";
+
+					try {
+						// 获取当前活动的标签
+						const activeTab = document
+							.querySelector(".tab.active")
+							.getAttribute("data-tab");
+						let url = "/api/v1/";
+						let params = new URLSearchParams();
+
+						// 根据不同的标签构建不同的请求
+						switch (activeTab) {
+							case "chatlog":
+								url += "chatlog";
+								const startDate =
+									document.getElementById("start-date").value;
+								const endDate =
+									document.getElementById("end-date").value;
+								const talker =
+									document.getElementById("talker").value;
+								const sender =
+									document.getElementById("sender").value;
+								const keyword =
+									document.getElementById("keyword").value;
+								const limit =
+									document.getElementById("limit").value;
+								const offset =
+									document.getElementById("offset").value;
+								const format =
+									document.getElementById("format").value;
+
+								// 验证必填项：开始日期
+								if (!startDate && !endDate) {
+									errorMessage.textContent =
+										"错误: 请至少选择开始日期！";
+									errorMessage.style.display = "block";
+									return;
+								}
+
+								if (!startDate && endDate) {
+									errorMessage.textContent =
+										"错误: 请先选择开始日期！";
+									errorMessage.style.display = "block";
+									return;
+								}
+
+								let timeValue = "";
+
+								if (startDate && endDate) {
+									if (
+										new Date(startDate) > new Date(endDate)
+									) {
+										errorMessage.textContent =
+											"错误: 结束日期不能早于开始日期！";
+										errorMessage.style.display = "block";
+										return;
+									}
+									timeValue = `${startDate}~${endDate}`;
+								} else if (startDate) {
+									timeValue = startDate;
+								}
+
+								if (!timeValue) {
+									errorMessage.textContent =
+										"错误: 时间范围不合法！";
+									errorMessage.style.display = "block";
+									return;
+								}
+
+								params.append("time", timeValue);
+								// talker 可为空，留空表示全部按会话分组
+								if (talker) params.append("talker", talker);
+								if (sender) params.append("sender", sender);
+								if (keyword) params.append("keyword", keyword);
+								if (limit) params.append("limit", limit);
+								if (offset) params.append("offset", offset);
+								if (format) params.append("format", format);
+								break;
+
+							case "contact":
+								url += "contact";
+								const contactKeyword =
+									document.getElementById(
+										"contact-keyword"
+									).value;
+								const contactFormat =
+									document.getElementById(
+										"contact-format"
+									).value;
+
+								if (contactKeyword)
+									params.append("keyword", contactKeyword);
+								if (contactFormat)
+									params.append("format", contactFormat);
+								break;
+
+							case "chatroom":
+								url += "chatroom";
+								const chatroomKeyword =
+									document.getElementById(
+										"chatroom-keyword"
+									).value;
+								const chatroomFormat =
+									document.getElementById(
+										"chatroom-format"
+									).value;
+
+								if (chatroomKeyword)
+									params.append("keyword", chatroomKeyword);
+								if (chatroomFormat)
+									params.append("format", chatroomFormat);
+								break;
+
+							case "session":
+								url += "session";
+								const sessionFormat =
+									document.getElementById(
+										"session-format"
+									).value;
+
+								if (sessionFormat)
+									params.append("format", sessionFormat);
+								break;
+							case "diary":
+								url += "diary";
+								const diaryDateInput =
+									document.getElementById("diary-date");
+								const diaryDate = diaryDateInput
+									? diaryDateInput.value
+									: "";
+								const diaryTalker =
+									document.getElementById(
+										"diary-talker"
+									).value;
+								const diaryFormat =
+									document.getElementById(
+										"diary-format"
+									).value;
+
+								if (!diaryDate) {
+									errorMessage.textContent =
+										"错误: 请选择日期！";
+									errorMessage.style.display = "block";
+									return;
+								}
+
+								params.append("date", diaryDate);
+								if (diaryTalker)
+									params.append("talker", diaryTalker);
+								if (diaryFormat)
+									params.append("format", diaryFormat);
+								break;
+							case "search":
+								url += "search";
+								const searchQuery =
+									document.getElementById(
+										"search-query"
+									).value;
+								const searchTalker =
+									document.getElementById(
+										"search-talker"
+									).value;
+								const searchSender =
+									document.getElementById(
+										"search-sender"
+									).value;
+								const searchTime =
+									document.getElementById(
+										"search-time"
+									).value;
+								const searchLimit =
+									document.getElementById(
+										"search-limit"
+									).value;
+								const searchOffset =
+									document.getElementById(
+										"search-offset"
+									).value;
+
+								if (!searchQuery.trim()) {
+									errorMessage.textContent =
+										"错误: 请输入搜索关键词！";
+									errorMessage.style.display = "block";
+									return;
+								}
+								if (!searchTalker.trim()) {
+									errorMessage.textContent =
+										"错误: 请输入会话 ID！";
+									errorMessage.style.display = "block";
+									return;
+								}
+
+								params.append("q", searchQuery.trim());
+								params.append("talker", searchTalker.trim());
+								if (searchSender)
+									params.append(
+										"sender",
+										searchSender.trim()
+									);
+								if (searchTime)
+									params.append("time", searchTime.trim());
+								if (searchLimit)
+									params.append("limit", searchLimit);
+								if (searchOffset)
+									params.append("offset", searchOffset);
+								break;
+						}
+
+						// 添加参数到URL
+						const apiUrl = params.toString()
+							? `${url}?${params.toString()}`
+							: url;
+
+						// 获取完整URL（包含域名部分）
+						const fullUrl = window.location.origin + apiUrl;
+
+						// 显示完整请求URL
+						requestUrlContainer.textContent = fullUrl;
+						resultWrapper.style.display = "block";
+
+						// 显示加载中
+						resultContainer.innerHTML =
+							'<div class="loading">加载中</div>';
+
+						// 发送请求
+						const response = await fetch(apiUrl);
+
+						if (!response.ok) {
+							throw new Error(
+								`HTTP error! Status: ${response.status}`
+							);
+						}
+
+						// 获取响应内容类型
+						const contentType =
+							response.headers.get("content-type");
+						let result;
+
+						if (
+							contentType &&
+							contentType.includes("application/json")
+						) {
+							// 如果是JSON，格式化显示
+							result = await response.json();
+							resultContainer.innerHTML = JSON.stringify(
+								result,
+								null,
+								2
+							);
+						} else {
+							// 其他格式直接显示文本
+							result = await response.text();
+							resultContainer.innerHTML = result;
+						}
+					} catch (error) {
+						resultContainer.innerHTML = "";
+						errorMessage.textContent = `查询出错: ${error.message}`;
+						errorMessage.style.display = "block";
+						console.error("API查询出错:", error);
+					}
+				});
+
+			const diaryDateInput = document.getElementById("diary-date");
+			if (diaryDateInput) {
+				const today = new Date();
+				const yyyy = today.getFullYear();
+				const mm = String(today.getMonth() + 1).padStart(2, "0");
+				const dd = String(today.getDate()).padStart(2, "0");
+				const todayStr = `${yyyy}-${mm}-${dd}`;
+				diaryDateInput.max = todayStr;
+				if (!diaryDateInput.value) {
+					diaryDateInput.value = todayStr;
+				}
+			}
+
+			// 复制结果功能
+			document
+				.getElementById("copy-result")
+				.addEventListener("click", function () {
+					const resultText =
+						document.getElementById("api-result").innerText;
+					copyToClipboard(resultText, this, "已复制结果!");
+				});
+
+			// 复制URL功能
+			document
+				.getElementById("copy-url")
+				.addEventListener("click", function () {
+					// 获取完整URL（包含域名部分）
+					const urlText =
+						document.getElementById("request-url").innerText;
+					copyToClipboard(urlText, this, "已复制URL!");
+				});
+
+			// 通用复制功能（支持非安全上下文的回退方案）
+			function copyToClipboard(text, button, successMessage) {
+				const originalText = button.textContent;
+				const toast = (msg) => {
+					button.textContent = msg;
+					setTimeout(() => {
+						button.textContent = originalText;
+					}, 2000);
+				};
+
+				// 无可复制内容
+				if (!text || text.trim() === "") {
+					toast("无可复制内容");
+					return;
+				}
+
+				// 现代 API，要求安全上下文（https 或 localhost）
+				if (navigator.clipboard && window.isSecureContext) {
+					navigator.clipboard
+						.writeText(text)
+						.then(() => {
+							toast(successMessage);
+						})
+						.catch((err) => {
+							// 失败时尝试回退
+							const ok = fallbackCopyTextToClipboard(text);
+							toast(ok ? successMessage : "复制失败");
+							if (!ok) console.error("复制失败:", err);
+						});
+					return;
+				}
+
+				// 非安全上下文或不支持 navigator.clipboard 时，使用回退方案
+				const ok = fallbackCopyTextToClipboard(text);
+				toast(ok ? successMessage : "复制失败");
+			}
+
+			// 回退复制方案：创建隐藏 textarea，使用 execCommand('copy')
+			function fallbackCopyTextToClipboard(text) {
+				try {
+					const textarea = document.createElement("textarea");
+					textarea.value = text;
+					// 避免页面滚动抖动
+					textarea.style.position = "fixed";
+					textarea.style.top = "-9999px";
+					textarea.style.left = "-9999px";
+					textarea.setAttribute("readonly", "");
+					document.body.appendChild(textarea);
+					textarea.focus();
+					textarea.select();
+					const ok = document.execCommand("copy");
+					document.body.removeChild(textarea);
+					return ok;
+				} catch (e) {
+					console.error("回退复制失败:", e);
+					return false;
+				}
+			}
+		</script>
+	</body>
 </html>
