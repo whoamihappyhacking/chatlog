@@ -190,6 +190,15 @@
 				position: relative;
 			}
 
+			.result-block {
+				margin: 0;
+				white-space: pre-wrap;
+				font-family: "SFMono-Regular", Consolas, "Liberation Mono",
+					Menlo, monospace;
+				font-size: 14px;
+				line-height: 1.6;
+			}
+
 			.request-url {
 				background-color: #f0f0f0;
 				padding: 10px;
@@ -343,6 +352,13 @@
 				color: #777;
 				margin-left: 5px;
 				font-style: italic;
+			}
+
+			.search-highlight {
+				background-color: #fff3b0;
+				color: inherit;
+				padding: 0 2px;
+				border-radius: 3px;
 			}
 
 			.required-field {
@@ -636,24 +652,27 @@
 									>必填</span
 								></label
 							>
-							<input id="search-query" type="text"
-							placeholder="支持空格分词，利用 AND/OR/\"
-							组合高级语法" />
+							<input
+								id="search-query"
+								type="text"
+								placeholder="支持空格分词，可使用 AND/OR/NOT 等语法"
+							/>
 						</div>
 						<div class="form-group">
 							<label for="search-talker"
 								>会话 ID（可多个，英文逗号分隔）：<span
-									class="required-field"
-									>必填</span
+									class="optional-param"
+									>可选</span
 								></label
 							>
 							<input
 								id="search-talker"
 								type="text"
-								placeholder="例如：wxid_xxx@chatroom"
+								placeholder="留空默认搜索所有联系人与群聊"
 							/>
 							<div class="form-hint">
-								可以从“最近会话”或“群聊”接口获取对应的 ID。
+								可以从“最近会话”或“群聊”接口获取对应的
+								ID；如留空将检索所有会话。
 							</div>
 						</div>
 						<div class="form-group">
@@ -669,18 +688,18 @@
 							/>
 						</div>
 						<div class="form-group">
-							<label for="search-time"
+							<label for="search-start-date"
 								>时间范围：<span class="optional-param"
 									>可选</span
 								></label
 							>
-							<input
-								id="search-time"
-								type="text"
-								placeholder="支持 2024-01-01~2024-01-31、last-30d 等格式"
-							/>
+							<div class="date-range">
+								<input type="date" id="search-start-date" />
+								<span class="date-separator">至</span>
+								<input type="date" id="search-end-date" />
+							</div>
 							<div class="form-hint">
-								留空表示搜索全量消息；支持与聊天记录接口相同的时间表达式。
+								可选择开始日期和结束日期；留空表示不限制时间范围。
 							</div>
 						</div>
 						<div class="form-group">
@@ -709,6 +728,20 @@
 								min="0"
 								placeholder="默认 0"
 							/>
+						</div>
+						<div class="form-group">
+							<label for="search-format"
+								>输出格式：<span class="optional-param"
+									>可选</span
+								></label
+							>
+							<select id="search-format">
+								<option value="">默认</option>
+								<option value="json">JSON</option>
+								<option value="text">纯文本</option>
+								<option value="html">HTML</option>
+								<option value="csv">CSV</option>
+							</select>
 						</div>
 					</div>
 
@@ -833,28 +866,32 @@
 					errorMessage.style.display = "none";
 					errorMessage.textContent = "";
 
+					let highlightTerms = [];
+					let responseFormat = "";
+
 					try {
-						// 获取当前活动的标签
 						const activeTab = document
 							.querySelector(".tab.active")
 							.getAttribute("data-tab");
 						let url = "/api/v1/";
-						let params = new URLSearchParams();
+						const params = new URLSearchParams();
 
-						// 根据不同的标签构建不同的请求
 						switch (activeTab) {
-							case "chatlog":
+							case "chatlog": {
 								url += "chatlog";
 								const startDate =
 									document.getElementById("start-date").value;
 								const endDate =
 									document.getElementById("end-date").value;
-								const talker =
-									document.getElementById("talker").value;
-								const sender =
-									document.getElementById("sender").value;
-								const keyword =
-									document.getElementById("keyword").value;
+								const talker = document
+									.getElementById("talker")
+									.value.trim();
+								const sender = document
+									.getElementById("sender")
+									.value.trim();
+								const keyword = document
+									.getElementById("keyword")
+									.value.trim();
 								const limit =
 									document.getElementById("limit").value;
 								const offset =
@@ -862,7 +899,6 @@
 								const format =
 									document.getElementById("format").value;
 
-								// 验证必填项：开始日期
 								if (!startDate && !endDate) {
 									errorMessage.textContent =
 										"错误: 请至少选择开始日期！";
@@ -878,7 +914,6 @@
 								}
 
 								let timeValue = "";
-
 								if (startDate && endDate) {
 									if (
 										new Date(startDate) > new Date(endDate)
@@ -901,70 +936,85 @@
 								}
 
 								params.append("time", timeValue);
-								// talker 可为空，留空表示全部按会话分组
 								if (talker) params.append("talker", talker);
 								if (sender) params.append("sender", sender);
-								if (keyword) params.append("keyword", keyword);
+								if (keyword) {
+									params.append("keyword", keyword);
+									highlightTerms =
+										extractSearchTerms(keyword);
+								}
 								if (limit) params.append("limit", limit);
 								if (offset) params.append("offset", offset);
-								if (format) params.append("format", format);
+								if (format) {
+									params.append("format", format);
+									responseFormat = format;
+								}
 								break;
-
-							case "contact":
+							}
+							case "contact": {
 								url += "contact";
-								const contactKeyword =
-									document.getElementById(
-										"contact-keyword"
-									).value;
+								const contactKeyword = document
+									.getElementById("contact-keyword")
+									.value.trim();
 								const contactFormat =
 									document.getElementById(
 										"contact-format"
 									).value;
 
-								if (contactKeyword)
+								if (contactKeyword) {
 									params.append("keyword", contactKeyword);
-								if (contactFormat)
+									highlightTerms =
+										extractSearchTerms(contactKeyword);
+								}
+								if (contactFormat) {
 									params.append("format", contactFormat);
+									responseFormat = contactFormat;
+								}
 								break;
-
-							case "chatroom":
+							}
+							case "chatroom": {
 								url += "chatroom";
-								const chatroomKeyword =
-									document.getElementById(
-										"chatroom-keyword"
-									).value;
+								const chatroomKeyword = document
+									.getElementById("chatroom-keyword")
+									.value.trim();
 								const chatroomFormat =
 									document.getElementById(
 										"chatroom-format"
 									).value;
 
-								if (chatroomKeyword)
+								if (chatroomKeyword) {
 									params.append("keyword", chatroomKeyword);
-								if (chatroomFormat)
+									highlightTerms =
+										extractSearchTerms(chatroomKeyword);
+								}
+								if (chatroomFormat) {
 									params.append("format", chatroomFormat);
+									responseFormat = chatroomFormat;
+								}
 								break;
-
-							case "session":
+							}
+							case "session": {
 								url += "session";
 								const sessionFormat =
 									document.getElementById(
 										"session-format"
 									).value;
-
-								if (sessionFormat)
+								if (sessionFormat) {
 									params.append("format", sessionFormat);
+									responseFormat = sessionFormat;
+								}
 								break;
-							case "diary":
+							}
+							case "diary": {
 								url += "diary";
 								const diaryDateInput =
 									document.getElementById("diary-date");
 								const diaryDate = diaryDateInput
 									? diaryDateInput.value
 									: "";
-								const diaryTalker =
-									document.getElementById(
-										"diary-talker"
-									).value;
+								const diaryTalker = document
+									.getElementById("diary-talker")
+									.value.trim();
 								const diaryFormat =
 									document.getElementById(
 										"diary-format"
@@ -978,12 +1028,18 @@
 								}
 
 								params.append("date", diaryDate);
-								if (diaryTalker)
+								if (diaryTalker) {
 									params.append("talker", diaryTalker);
-								if (diaryFormat)
+									highlightTerms =
+										extractSearchTerms(diaryTalker);
+								}
+								if (diaryFormat) {
 									params.append("format", diaryFormat);
+									responseFormat = diaryFormat;
+								}
 								break;
-							case "search":
+							}
+							case "search": {
 								url += "search";
 								const searchQuery =
 									document.getElementById(
@@ -997,9 +1053,13 @@
 									document.getElementById(
 										"search-sender"
 									).value;
-								const searchTime =
+								const searchStartDate =
 									document.getElementById(
-										"search-time"
+										"search-start-date"
+									).value;
+								const searchEndDate =
+									document.getElementById(
+										"search-end-date"
 									).value;
 								const searchLimit =
 									document.getElementById(
@@ -1009,6 +1069,11 @@
 									document.getElementById(
 										"search-offset"
 									).value;
+								const searchFormatSelect =
+									document.getElementById("search-format");
+								const searchFormatValue = searchFormatSelect
+									? searchFormatSelect.value
+									: "";
 
 								if (!searchQuery.trim()) {
 									errorMessage.textContent =
@@ -1016,74 +1081,101 @@
 									errorMessage.style.display = "block";
 									return;
 								}
-								if (!searchTalker.trim()) {
+
+								const trimmedQuery = searchQuery.trim();
+								highlightTerms =
+									extractSearchTerms(trimmedQuery);
+								params.append("q", trimmedQuery);
+
+								const trimmedTalker = searchTalker.trim();
+								if (trimmedTalker) {
+									params.append("talker", trimmedTalker);
+								}
+
+								let searchTimeValue = "";
+								if (searchStartDate && searchEndDate) {
+									if (
+										new Date(searchStartDate) >
+										new Date(searchEndDate)
+									) {
+										errorMessage.textContent =
+											"错误: 结束日期不能早于开始日期！";
+										errorMessage.style.display = "block";
+										return;
+									}
+									searchTimeValue = `${searchStartDate}~${searchEndDate}`;
+								} else if (searchStartDate) {
+									searchTimeValue = searchStartDate;
+								} else if (!searchStartDate && searchEndDate) {
 									errorMessage.textContent =
-										"错误: 请输入会话 ID！";
+										"错误: 请先选择开始日期！";
 									errorMessage.style.display = "block";
 									return;
 								}
 
-								params.append("q", searchQuery.trim());
-								params.append("talker", searchTalker.trim());
 								if (searchSender)
 									params.append(
 										"sender",
 										searchSender.trim()
 									);
-								if (searchTime)
-									params.append("time", searchTime.trim());
+								if (searchTimeValue)
+									params.append("time", searchTimeValue);
 								if (searchLimit)
 									params.append("limit", searchLimit);
 								if (searchOffset)
 									params.append("offset", searchOffset);
+								if (searchFormatValue) {
+									params.append("format", searchFormatValue);
+									responseFormat = searchFormatValue;
+								}
 								break;
+							}
 						}
 
-						// 添加参数到URL
 						const apiUrl = params.toString()
 							? `${url}?${params.toString()}`
 							: url;
-
-						// 获取完整URL（包含域名部分）
 						const fullUrl = window.location.origin + apiUrl;
-
-						// 显示完整请求URL
 						requestUrlContainer.textContent = fullUrl;
 						resultWrapper.style.display = "block";
-
-						// 显示加载中
 						resultContainer.innerHTML =
 							'<div class="loading">加载中</div>';
 
-						// 发送请求
 						const response = await fetch(apiUrl);
-
 						if (!response.ok) {
 							throw new Error(
 								`HTTP error! Status: ${response.status}`
 							);
 						}
 
-						// 获取响应内容类型
 						const contentType =
-							response.headers.get("content-type");
-						let result;
-
-						if (
-							contentType &&
-							contentType.includes("application/json")
-						) {
-							// 如果是JSON，格式化显示
-							result = await response.json();
-							resultContainer.innerHTML = JSON.stringify(
-								result,
-								null,
-								2
+							response.headers.get("content-type") || "";
+						if (contentType.includes("application/json")) {
+							const data = await response.json();
+							const text = JSON.stringify(data, null, 2);
+							const highlighted = highlightPlainText(
+								text,
+								highlightTerms
 							);
+							resultContainer.innerHTML = `<pre class="result-block">${highlighted}</pre>`;
 						} else {
-							// 其他格式直接显示文本
-							result = await response.text();
-							resultContainer.innerHTML = result;
+							const textResult = await response.text();
+							const expectsHtml =
+								(responseFormat || "").toLowerCase() ===
+									"html" || contentType.includes("text/html");
+							if (expectsHtml) {
+								resultContainer.innerHTML = textResult;
+								highlightHtmlContent(
+									resultContainer,
+									highlightTerms
+								);
+							} else {
+								const highlighted = highlightPlainText(
+									textResult,
+									highlightTerms
+								);
+								resultContainer.innerHTML = `<pre class="result-block">${highlighted}</pre>`;
+							}
 						}
 					} catch (error) {
 						resultContainer.innerHTML = "";
@@ -1092,6 +1184,112 @@
 						console.error("API查询出错:", error);
 					}
 				});
+
+			function escapeHtml(str) {
+				if (str == null) return "";
+				return str
+					.replace(/&/g, "&amp;")
+					.replace(/</g, "&lt;")
+					.replace(/>/g, "&gt;")
+					.replace(/"/g, "&quot;")
+					.replace(/'/g, "&#39;");
+			}
+
+			function extractSearchTerms(raw) {
+				if (!raw) return [];
+				return Array.from(
+					new Set(
+						raw
+							.split(/[\s,，；;、]+/)
+							.map((term) => term.trim())
+							.filter(Boolean)
+					)
+				);
+			}
+
+			function buildHighlightPattern(terms) {
+				if (!terms || !terms.length) return "";
+				const escaped = Array.from(
+					new Set(
+						terms
+							.map((term) =>
+								term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+							)
+							.filter(Boolean)
+					)
+				).sort((a, b) => b.length - a.length);
+				if (!escaped.length) return "";
+				return `(${escaped.join("|")})`;
+			}
+
+			function highlightPlainText(text, terms) {
+				const pattern = buildHighlightPattern(terms);
+				if (!pattern) {
+					return escapeHtml(text);
+				}
+				const regex = new RegExp(pattern, "gi");
+				let lastIndex = 0;
+				let highlighted = "";
+				text.replace(regex, (match, _group, offset) => {
+					highlighted += escapeHtml(text.slice(lastIndex, offset));
+					highlighted += `<mark class="search-highlight">${escapeHtml(
+						match
+					)}</mark>`;
+					lastIndex = offset + match.length;
+					return match;
+				});
+				highlighted += escapeHtml(text.slice(lastIndex));
+				return highlighted;
+			}
+
+			function highlightHtmlContent(container, terms) {
+				const pattern = buildHighlightPattern(terms);
+				if (!pattern) return;
+				const walker = document.createTreeWalker(
+					container,
+					NodeFilter.SHOW_TEXT,
+					null,
+					false
+				);
+				const nodes = [];
+				while (walker.nextNode()) {
+					const node = walker.currentNode;
+					if (!node || !node.nodeValue || !node.nodeValue.trim())
+						continue;
+					nodes.push(node);
+				}
+				nodes.forEach((textNode) => {
+					const text = textNode.nodeValue;
+					const regex = new RegExp(pattern, "gi");
+					if (!regex.test(text)) {
+						return;
+					}
+					regex.lastIndex = 0;
+					const fragment = document.createDocumentFragment();
+					let lastIndex = 0;
+					text.replace(regex, (match, _group, offset) => {
+						if (offset > lastIndex) {
+							fragment.appendChild(
+								document.createTextNode(
+									text.slice(lastIndex, offset)
+								)
+							);
+						}
+						const mark = document.createElement("mark");
+						mark.className = "search-highlight";
+						mark.textContent = match;
+						fragment.appendChild(mark);
+						lastIndex = offset + match.length;
+						return match;
+					});
+					if (lastIndex < text.length) {
+						fragment.appendChild(
+							document.createTextNode(text.slice(lastIndex))
+						);
+					}
+					textNode.parentNode.replaceChild(fragment, textNode);
+				});
+			}
 
 			const diaryDateInput = document.getElementById("diary-date");
 			if (diaryDateInput) {

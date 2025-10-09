@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -28,6 +29,8 @@ const (
 	Video   = "video"
 	File    = "file"
 	Voice   = "voice"
+
+	talkerCacheTTL = 30 * time.Second
 )
 
 var Groups = []*dbm.Group{
@@ -78,6 +81,10 @@ type DataSource struct {
 
 	// 消息数据库信息
 	messageInfos []MessageDBInfo
+
+	talkerCacheMu     sync.RWMutex
+	talkerCache       []string
+	talkerCacheExpiry time.Time
 }
 
 // New 创建一个新的 WindowsV3DataSource
@@ -101,12 +108,21 @@ func New(path string) (*DataSource, error) {
 	}
 
 	ds.dbm.AddCallback(Message, func(event fsnotify.Event) error {
-		if !event.Op.Has(fsnotify.Create) {
+		if !(event.Op.Has(fsnotify.Create) || event.Op.Has(fsnotify.Write) || event.Op.Has(fsnotify.Rename)) {
 			return nil
 		}
 		if err := ds.initMessageDbs(); err != nil {
 			log.Err(err).Msgf("Failed to reinitialize message DBs: %s", event.Name)
 		}
+		ds.invalidateTalkerCache()
+		return nil
+	})
+
+	ds.dbm.AddCallback(Contact, func(event fsnotify.Event) error {
+		if !(event.Op.Has(fsnotify.Create) || event.Op.Has(fsnotify.Write) || event.Op.Has(fsnotify.Rename) || event.Op.Has(fsnotify.Remove)) {
+			return nil
+		}
+		ds.invalidateTalkerCache()
 		return nil
 	})
 
@@ -214,6 +230,7 @@ func (ds *DataSource) initMessageDbs() error {
 		return nil
 	}
 	ds.messageInfos = infos
+	ds.invalidateTalkerCache()
 	return nil
 }
 
@@ -429,7 +446,25 @@ func (ds *DataSource) SearchMessages(ctx context.Context, req *model.SearchReque
 
 	talkers := util.Str2List(req.Talker, ",")
 	if len(talkers) == 0 {
-		return nil, errors.ErrTalkerEmpty
+		var err error
+		talkers, err = ds.collectAllTalkers(ctx)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(talkers) == 0 {
+		return &model.SearchResponse{
+			Total:      0,
+			Hits:       []*model.SearchHit{},
+			DurationMs: 0,
+			Limit:      req.Limit,
+			Offset:     req.Offset,
+			Query:      req.Query,
+			Talker:     req.Talker,
+			Sender:     req.Sender,
+			Start:      req.Start,
+			End:        req.End,
+		}, nil
 	}
 
 	limit := req.Limit
@@ -674,6 +709,117 @@ func (ds *DataSource) SearchMessages(ctx context.Context, req *model.SearchReque
 		Start:      req.Start,
 		End:        req.End,
 	}, nil
+}
+
+func (ds *DataSource) GetDatasetFingerprint(context.Context) (string, error) {
+	return ds.dbm.FingerprintForGroups(Message)
+}
+
+func (ds *DataSource) getCachedTalkers() []string {
+	ds.talkerCacheMu.RLock()
+	if ds.talkerCacheExpiry.IsZero() || time.Now().After(ds.talkerCacheExpiry) {
+		ds.talkerCacheMu.RUnlock()
+		return nil
+	}
+	cached := append([]string(nil), ds.talkerCache...)
+	ds.talkerCacheMu.RUnlock()
+	return cached
+}
+
+func (ds *DataSource) cacheTalkers(talkers []string) {
+	copySlice := append([]string(nil), talkers...)
+	ds.talkerCacheMu.Lock()
+	ds.talkerCache = copySlice
+	ds.talkerCacheExpiry = time.Now().Add(talkerCacheTTL)
+	ds.talkerCacheMu.Unlock()
+}
+
+func (ds *DataSource) invalidateTalkerCache() {
+	ds.talkerCacheMu.Lock()
+	ds.talkerCache = nil
+	ds.talkerCacheExpiry = time.Time{}
+	ds.talkerCacheMu.Unlock()
+}
+
+func (ds *DataSource) collectAllTalkers(ctx context.Context) ([]string, error) {
+	if cached := ds.getCachedTalkers(); cached != nil {
+		return cached, nil
+	}
+
+	talkerSet := make(map[string]struct{})
+	talkers := make([]string, 0)
+
+	add := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return
+		}
+		if _, exists := talkerSet[name]; exists {
+			return
+		}
+		talkerSet[name] = struct{}{}
+		talkers = append(talkers, name)
+	}
+
+	if db, err := ds.dbm.GetDB(Contact); err == nil && db != nil {
+		rows, err := db.QueryContext(ctx, `SELECT strUsrName FROM Session WHERE IFNULL(strUsrName,'') <> ''`)
+		if err == nil {
+			for rows.Next() {
+				if err := ctx.Err(); err != nil {
+					rows.Close()
+					return nil, err
+				}
+				var username string
+				if err := rows.Scan(&username); err != nil {
+					log.Debug().Err(err).Msg("scan session talker failed")
+					continue
+				}
+				add(username)
+			}
+			if err := rows.Err(); err != nil {
+				log.Debug().Err(err).Msg("iterate session talkers failed")
+			}
+			rows.Close()
+		} else {
+			log.Debug().Err(err).Msg("query session talkers failed")
+		}
+
+		if len(talkers) == 0 {
+			rows, err = db.QueryContext(ctx, `SELECT UserName FROM Contact WHERE IFNULL(UserName,'') <> ''`)
+			if err == nil {
+				for rows.Next() {
+					if err := ctx.Err(); err != nil {
+						rows.Close()
+						return nil, err
+					}
+					var username string
+					if err := rows.Scan(&username); err != nil {
+						log.Debug().Err(err).Msg("scan contact talker failed")
+						continue
+					}
+					add(username)
+				}
+				if err := rows.Err(); err != nil {
+					log.Debug().Err(err).Msg("iterate contact talkers failed")
+				}
+				rows.Close()
+			} else {
+				log.Debug().Err(err).Msg("query contact talkers failed")
+			}
+		}
+	}
+
+	if len(talkers) == 0 {
+		for _, info := range ds.messageInfos {
+			for username := range info.TalkerMap {
+				add(username)
+			}
+		}
+	}
+
+	sort.Strings(talkers)
+	ds.cacheTalkers(talkers)
+	return talkers, nil
 }
 
 // GetContacts 实现获取联系人信息的方法

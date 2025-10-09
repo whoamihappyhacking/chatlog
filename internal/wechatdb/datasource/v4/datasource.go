@@ -644,6 +644,10 @@ func (ds *DataSource) SearchMessages(ctx context.Context, req *model.SearchReque
 	}, nil
 }
 
+func (ds *DataSource) GetDatasetFingerprint(context.Context) (string, error) {
+	return ds.dbm.FingerprintForGroups(Message)
+}
+
 // 联系人
 func (ds *DataSource) GetContacts(ctx context.Context, key string, limit, offset int) ([]*model.Contact, error) {
 	var query string

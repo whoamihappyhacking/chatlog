@@ -722,6 +722,7 @@ func (s *Service) handleSearch(c *gin.Context) {
 		End    string `form:"end"`
 		Limit  int    `form:"limit"`
 		Offset int    `form:"offset"`
+		Format string `form:"format"`
 	}{}
 
 	if err := c.BindQuery(&params); err != nil {
@@ -730,16 +731,8 @@ func (s *Service) handleSearch(c *gin.Context) {
 	}
 
 	query := strings.TrimSpace(params.Query)
-	if query == "" {
-		errors.Err(c, errors.InvalidArg("q"))
-		return
-	}
 
 	talker := strings.TrimSpace(params.Talker)
-	if talker == "" {
-		errors.Err(c, errors.ErrTalkerEmpty)
-		return
-	}
 
 	limit := params.Limit
 	if limit <= 0 {
@@ -818,7 +811,163 @@ func (s *Service) handleSearch(c *gin.Context) {
 	resp.Limit = limit
 	resp.Offset = offset
 
-	c.JSON(http.StatusOK, resp)
+	format := strings.ToLower(strings.TrimSpace(params.Format))
+	terms := extractQueryTerms(resp.Query)
+
+	switch format {
+	case "html":
+		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+		c.Writer.WriteString(`<html><head><meta charset="utf-8"><title>Search Result</title><style>body{font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;background:#f8f9fb;padding:24px;color:#2c3e50;}h1{margin:0 0 16px;font-size:22px;}h2{margin:24px 0 12px;font-size:18px;}p.meta{margin:4px 0;color:#5f6c7b;} .summary{background:#fff;padding:18px;border-radius:10px;box-shadow:0 1px 4px rgba(18,38,63,0.08);margin-bottom:18px;} .result-list{display:flex;flex-direction:column;gap:16px;} .hit{background:#fff;border-radius:10px;padding:16px 18px;box-shadow:0 1px 4px rgba(18,38,63,0.08);} .hit-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:13px;color:#5f6c7b;} .hit-header .talker{font-weight:600;color:#2c3e50;} .hit-header .score{font-family:monospace;color:#a0aec0;} .snippet{margin-bottom:10px;font-size:13px;color:#4a5568;padding:10px;border-left:3px solid #3498db;background:rgba(52,152,219,0.08);border-radius:6px;} .snippet code{background:rgba(27,31,35,0.05);padding:2px 4px;border-radius:4px;} .msg-content pre{white-space:pre-wrap;word-break:break-word;margin:0;font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;font-size:13px;color:#1f2933;} .meta-row{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:8px;font-size:13px;color:#5f6c7b;} .meta-row span{display:inline-flex;align-items:center;gap:4px;} .search-highlight{background:#fff3b0;color:inherit;padding:0 2px;border-radius:3px;} .empty{padding:28px;text-align:center;color:#768390;background:#fff;border-radius:10px;box-shadow:0 1px 4px rgba(18,38,63,0.08);} a.media{color:#2c3e50;text-decoration:none;border-bottom:1px dashed #2c3e50;} a.media:hover{color:#0f4c81;} </style></head><body>`)
+		c.Writer.WriteString("<div class=\"summary\">")
+		c.Writer.WriteString("<h1>搜索结果</h1>")
+		if resp.Query != "" {
+			c.Writer.WriteString("<p class=\"meta\"><strong>关键词：</strong>" + template.HTMLEscapeString(resp.Query) + "</p>")
+		}
+		talkerLabel := "全部会话"
+		if resp.Talker != "" {
+			talkerLabel = template.HTMLEscapeString(resp.Talker)
+		}
+		c.Writer.WriteString("<p class=\"meta\"><strong>会话：</strong>" + talkerLabel + "</p>")
+		if resp.Sender != "" {
+			c.Writer.WriteString("<p class=\"meta\"><strong>发送者：</strong>" + template.HTMLEscapeString(resp.Sender) + "</p>")
+		}
+		timeLabel := "不限"
+		if !resp.Start.IsZero() && !resp.End.IsZero() {
+			timeLabel = resp.Start.Format("2006-01-02 15:04:05") + " ~ " + resp.End.Format("2006-01-02 15:04:05")
+		} else if !resp.Start.IsZero() {
+			timeLabel = ">= " + resp.Start.Format("2006-01-02 15:04:05")
+		} else if !resp.End.IsZero() {
+			timeLabel = "<= " + resp.End.Format("2006-01-02 15:04:05")
+		}
+		c.Writer.WriteString("<p class=\"meta\"><strong>时间范围：</strong>" + template.HTMLEscapeString(timeLabel) + "</p>")
+		c.Writer.WriteString(fmt.Sprintf("<p class=\"meta\"><strong>命中条数：</strong>%d（本页 %d 条）</p>", resp.Total, len(resp.Hits)))
+		c.Writer.WriteString("</div>")
+
+		if len(resp.Hits) == 0 {
+			c.Writer.WriteString("<div class=\"empty\">暂无搜索结果</div>")
+		} else {
+			c.Writer.WriteString("<div class=\"result-list\">")
+			for idx, hit := range resp.Hits {
+				if hit == nil || hit.Message == nil {
+					continue
+				}
+				msg := hit.Message
+				msg.SetContent("host", c.Request.Host)
+				talkerDisplay := msg.Talker
+				if msg.TalkerName != "" {
+					talkerDisplay = fmt.Sprintf("%s (%s)", msg.TalkerName, msg.Talker)
+				}
+				senderDisplay := msg.Sender
+				if msg.IsSelf {
+					senderDisplay = "我"
+				}
+				if msg.SenderName != "" {
+					senderDisplay = fmt.Sprintf("%s(%s)", msg.SenderName, msg.Sender)
+				}
+				c.Writer.WriteString("<div class=\"hit\">")
+				c.Writer.WriteString("<div class=\"hit-header\"><span class=\"talker\">#" + fmt.Sprintf("%d", idx+1) + " · " + template.HTMLEscapeString(talkerDisplay) + "</span>")
+				if hit.Score > 0 {
+					c.Writer.WriteString("<span class=\"score\">score: " + fmt.Sprintf("%.4f", hit.Score) + "</span>")
+				}
+				c.Writer.WriteString("</div>")
+				c.Writer.WriteString("<div class=\"meta-row\"><span>时间：" + template.HTMLEscapeString(msg.Time.Format("2006-01-02 15:04:05")) + "</span><span>发送者：" + template.HTMLEscapeString(senderDisplay) + "</span></div>")
+				if snippet := strings.TrimSpace(hit.Snippet); snippet != "" {
+					h := highlightPlainTextToHTML(snippet, terms)
+					h = strings.ReplaceAll(h, "\n", "<br/>")
+					c.Writer.WriteString("<div class=\"snippet\">" + h + "</div>")
+				}
+				c.Writer.WriteString("<div class=\"msg-content\"><pre>" + messageHTMLPlaceholder(msg) + "</pre></div>")
+				c.Writer.WriteString("</div>")
+			}
+			c.Writer.WriteString("</div>")
+		}
+		c.Writer.WriteString(previewHTMLSnippet)
+		c.Writer.WriteString("</body></html>")
+		return
+	case "text", "plain":
+		c.Writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		c.Writer.Header().Set("Cache-Control", "no-cache")
+		c.Writer.Header().Set("Connection", "keep-alive")
+		fmt.Fprintf(c.Writer, "关键词: %s\n", resp.Query)
+		talkerLabel := resp.Talker
+		if talkerLabel == "" {
+			talkerLabel = "全部会话"
+		}
+		fmt.Fprintf(c.Writer, "会话: %s\n", talkerLabel)
+		if resp.Sender != "" {
+			fmt.Fprintf(c.Writer, "发送者: %s\n", resp.Sender)
+		}
+		switch {
+		case !resp.Start.IsZero() && !resp.End.IsZero():
+			fmt.Fprintf(c.Writer, "时间: %s ~ %s\n", resp.Start.Format("2006-01-02 15:04:05"), resp.End.Format("2006-01-02 15:04:05"))
+		case !resp.Start.IsZero():
+			fmt.Fprintf(c.Writer, "时间: >= %s\n", resp.Start.Format("2006-01-02 15:04:05"))
+		case !resp.End.IsZero():
+			fmt.Fprintf(c.Writer, "时间: <= %s\n", resp.End.Format("2006-01-02 15:04:05"))
+		default:
+			fmt.Fprintln(c.Writer, "时间: 不限")
+		}
+		fmt.Fprintf(c.Writer, "总命中: %d, 本页: %d\n", resp.Total, len(resp.Hits))
+		fmt.Fprintln(c.Writer, strings.Repeat("-", 60))
+		for idx, hit := range resp.Hits {
+			if hit == nil || hit.Message == nil {
+				continue
+			}
+			msg := hit.Message
+			msg.SetContent("host", c.Request.Host)
+			title := msg.Talker
+			if msg.TalkerName != "" {
+				title = fmt.Sprintf("%s (%s)", msg.TalkerName, msg.Talker)
+			}
+			sender := msg.Sender
+			if msg.IsSelf {
+				sender = "我"
+			}
+			if msg.SenderName != "" {
+				sender = fmt.Sprintf("%s(%s)", msg.SenderName, msg.Sender)
+			}
+			fmt.Fprintf(c.Writer, "[%d] %s @ %s\n", idx+1, msg.Time.Format("2006-01-02 15:04:05"), title)
+			fmt.Fprintf(c.Writer, "发送者: %s\n", sender)
+			fmt.Fprintf(c.Writer, "%s\n", msg.PlainTextContent())
+			if snippet := strings.TrimSpace(hit.Snippet); snippet != "" {
+				fmt.Fprintf(c.Writer, "Snippet: %s\n", snippet)
+			}
+			fmt.Fprintln(c.Writer, strings.Repeat("-", 60))
+		}
+		return
+	case "csv":
+		c.Writer.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		c.Writer.Header().Set("Cache-Control", "no-cache")
+		c.Writer.Header().Set("Connection", "keep-alive")
+		c.Writer.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=search_%s.csv", time.Now().Format("20060102_150405")))
+		csvWriter := csv.NewWriter(c.Writer)
+		csvWriter.Write([]string{"Seq", "Time", "Talker", "TalkerName", "Sender", "SenderName", "Content", "Snippet"})
+		for _, hit := range resp.Hits {
+			if hit == nil || hit.Message == nil {
+				continue
+			}
+			msg := hit.Message
+			msg.SetContent("host", c.Request.Host)
+			csvWriter.Write([]string{
+				fmt.Sprintf("%d", msg.Seq),
+				msg.Time.Format("2006-01-02 15:04:05"),
+				msg.Talker,
+				msg.TalkerName,
+				msg.Sender,
+				msg.SenderName,
+				msg.PlainTextContent(),
+				strings.ReplaceAll(hit.Snippet, "\n", " "),
+			})
+		}
+		csvWriter.Flush()
+		return
+	case "json", "":
+		c.JSON(http.StatusOK, resp)
+		return
+	default:
+		c.JSON(http.StatusOK, resp)
+		return
+	}
 }
 
 func (s *Service) handleChatlog(c *gin.Context) {
@@ -1501,7 +1650,10 @@ func (s *Service) HandleVoice(c *gin.Context, data []byte) {
 }
 
 // 统一占位符：将 PlainTextContent 里形如 ![标签](url) 或 [标签](url) 的模式转成超链接形式，仅显示 [标签]。
-var placeholderPattern = regexp.MustCompile(`!?\[([^\]]+)\]\((https?://[^)]+)\)`)
+var (
+	placeholderPattern     = regexp.MustCompile(`!?\[([^\]]+)\]\((https?://[^)]+)\)`)
+	searchTermSplitPattern = regexp.MustCompile(`[\s,，；;、]+`)
+)
 
 func messageHTMLPlaceholder(m *model.Message) string {
 	content := m.PlainTextContent()
@@ -1535,4 +1687,78 @@ func messageHTMLPlaceholder(m *model.Message) string {
 		}
 		return `<a class="` + className + `" href="` + template.HTMLEscapeString(url) + `" target="_blank">` + anchorText + `</a>`
 	})
+}
+
+func extractQueryTerms(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	parts := searchTermSplitPattern.Split(raw, -1)
+	terms := make([]string, 0, len(parts))
+	seen := make(map[string]struct{})
+	for _, part := range parts {
+		term := strings.Trim(part, "\"'()[]{}")
+		if term == "" {
+			continue
+		}
+		switch strings.ToUpper(term) {
+		case "AND", "OR", "NOT":
+			continue
+		}
+		key := strings.ToLower(term)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		terms = append(terms, term)
+	}
+	return terms
+}
+
+func highlightPlainTextToHTML(text string, terms []string) string {
+	if text == "" {
+		return ""
+	}
+	if len(terms) == 0 {
+		return template.HTMLEscapeString(text)
+	}
+	unique := make(map[string]struct{})
+	escaped := make([]string, 0, len(terms))
+	for _, term := range terms {
+		trimmed := strings.TrimSpace(term)
+		if trimmed == "" {
+			continue
+		}
+		key := strings.ToLower(trimmed)
+		if _, ok := unique[key]; ok {
+			continue
+		}
+		unique[key] = struct{}{}
+		escaped = append(escaped, regexp.QuoteMeta(trimmed))
+	}
+	if len(escaped) == 0 {
+		return template.HTMLEscapeString(text)
+	}
+	sort.Slice(escaped, func(i, j int) bool { return len(escaped[i]) > len(escaped[j]) })
+	pattern := strings.Join(escaped, "|")
+	re, err := regexp.Compile("(?i)" + pattern)
+	if err != nil {
+		return template.HTMLEscapeString(text)
+	}
+	matches := re.FindAllStringIndex(text, -1)
+	if len(matches) == 0 {
+		return template.HTMLEscapeString(text)
+	}
+	var builder strings.Builder
+	last := 0
+	for _, loc := range matches {
+		builder.WriteString(template.HTMLEscapeString(text[last:loc[0]]))
+		builder.WriteString(`<mark class="search-highlight">`)
+		builder.WriteString(template.HTMLEscapeString(text[loc[0]:loc[1]]))
+		builder.WriteString("</mark>")
+		last = loc[1]
+	}
+	builder.WriteString(template.HTMLEscapeString(text[last:]))
+	return builder.String()
 }

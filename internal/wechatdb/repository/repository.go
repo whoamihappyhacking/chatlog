@@ -86,7 +86,7 @@ func (r *Repository) initCache(ctx context.Context) error {
 }
 
 func (r *Repository) contactCallback(event fsnotify.Event) error {
-	if !event.Op.Has(fsnotify.Create) {
+	if !(event.Op.Has(fsnotify.Create) || event.Op.Has(fsnotify.Write) || event.Op.Has(fsnotify.Rename) || event.Op.Has(fsnotify.Remove)) {
 		return nil
 	}
 	if err := r.initContactCache(context.Background()); err != nil {
@@ -96,7 +96,7 @@ func (r *Repository) contactCallback(event fsnotify.Event) error {
 }
 
 func (r *Repository) chatroomCallback(event fsnotify.Event) error {
-	if !event.Op.Has(fsnotify.Create) {
+	if !(event.Op.Has(fsnotify.Create) || event.Op.Has(fsnotify.Write) || event.Op.Has(fsnotify.Rename) || event.Op.Has(fsnotify.Remove)) {
 		return nil
 	}
 	if err := r.initChatRoomCache(context.Background()); err != nil {
