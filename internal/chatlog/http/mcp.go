@@ -389,10 +389,19 @@ func (s *Service) handleMCPDiary(ctx context.Context, request mcp.CallToolReques
 
 	for _, sess := range sessionsResp.Items {
 		msgs, err := s.db.GetMessages(start, end, sess.UserName, "", "", 0, 0)
-		if err != nil || len(msgs) == 0 { continue }
+		if err != nil || len(msgs) == 0 {
+			continue
+		}
 		hasSelf := false
-		for _, m := range msgs { if m.IsSelf { hasSelf = true; break } }
-		if !hasSelf { continue }
+		for _, m := range msgs {
+			if m.IsSelf {
+				hasSelf = true
+				break
+			}
+		}
+		if !hasSelf {
+			continue
+		}
 		groups = append(groups, &grouped{Talker: sess.UserName, TalkerName: sess.NickName, Messages: msgs})
 	}
 
@@ -402,12 +411,18 @@ func (s *Service) handleMCPDiary(ctx context.Context, request mcp.CallToolReques
 	} else {
 		for _, g := range groups {
 			header := g.Talker
-			if g.TalkerName != "" { header = fmt.Sprintf("%s(%s)", g.TalkerName, g.Talker) }
+			if g.TalkerName != "" {
+				header = fmt.Sprintf("%s(%s)", g.TalkerName, g.Talker)
+			}
 			buf.WriteString(fmt.Sprintf("[%s] - %d条\n", header, len(g.Messages)))
 			for _, m := range g.Messages {
 				sender := m.Sender
-				if m.IsSelf { sender = "我" }
-				if m.SenderName != "" { sender = fmt.Sprintf("%s(%s)", m.SenderName, sender) }
+				if m.IsSelf {
+					sender = "我"
+				}
+				if m.SenderName != "" {
+					sender = fmt.Sprintf("%s(%s)", m.SenderName, sender)
+				}
 				buf.WriteString(m.Time.Format("2006-01-02 15:04:05"))
 				buf.WriteString(" ")
 				buf.WriteString(sender)

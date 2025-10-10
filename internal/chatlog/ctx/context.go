@@ -185,6 +185,13 @@ func (c *Context) GetWebhook() *conf.Webhook {
 	return c.conf.Webhook
 }
 
+func (c *Context) GetSpeech() *conf.SpeechConfig {
+	if c == nil || c.conf == nil {
+		return nil
+	}
+	return c.conf.Speech
+}
+
 func (c *Context) SetHTTPEnabled(enabled bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

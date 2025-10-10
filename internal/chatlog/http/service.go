@@ -3,14 +3,18 @@ package http
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/rs/zerolog/log"
 
+	"github.com/sjzar/chatlog/internal/chatlog/conf"
 	"github.com/sjzar/chatlog/internal/chatlog/database"
 	"github.com/sjzar/chatlog/internal/errors"
+	"github.com/sjzar/chatlog/internal/speech"
+	"github.com/sjzar/chatlog/internal/speech/whispercpp"
 )
 
 type Service struct {
@@ -23,11 +27,17 @@ type Service struct {
 	mcpServer           *server.MCPServer
 	mcpSSEServer        *server.SSEServer
 	mcpStreamableServer *server.StreamableHTTPServer
+
+	speechCfg  *conf.SpeechConfig
+	speechOpts speech.Options
+	speech     speech.Transcriber
+	speechErr  error
 }
 
 type Config interface {
 	GetHTTPAddr() string
 	GetDataDir() string
+	GetSpeech() *conf.SpeechConfig
 }
 
 func NewService(conf Config, db *database.Service) *Service {
@@ -55,6 +65,7 @@ func NewService(conf Config, db *database.Service) *Service {
 
 	s.initMCPServer()
 	s.initRouter()
+	s.initSpeech()
 	return s
 }
 
@@ -104,9 +115,44 @@ func (s *Service) Stop() error {
 	}
 
 	log.Info().Msg("HTTP server stopped")
+	s.shutdownSpeech()
 	return nil
 }
 
 func (s *Service) GetRouter() *gin.Engine {
 	return s.router
+}
+
+func (s *Service) initSpeech() {
+	cfg := s.conf.GetSpeech()
+	if cfg == nil || !cfg.Enabled {
+		return
+	}
+
+	modelPath := strings.TrimSpace(cfg.Model)
+	if modelPath == "" {
+		log.Warn().Msg("speech config enabled but model path is empty; disabling speech backend")
+		return
+	}
+
+	opts := cfg.ToOptions()
+	transcriber, err := whispercpp.New(whispercpp.Config{ModelPath: modelPath, DefaultOptions: opts})
+	if err != nil {
+		log.Err(err).Str("model", modelPath).Msg("failed to initialize whisper backend; speech disabled")
+		s.speechErr = err
+		return
+	}
+
+	s.speechCfg = cfg
+	s.speechOpts = opts
+	s.speech = transcriber
+	log.Info().Str("model", modelPath).Msg("speech-to-text backend initialized")
+}
+
+func (s *Service) shutdownSpeech() {
+	if s.speech != nil {
+		s.speech.Close()
+		s.speech = nil
+		log.Info().Msg("speech-to-text backend stopped")
+	}
 }

@@ -30,9 +30,459 @@ var EFS embed.FS
 
 // 统一的 HTML 预览组件片段
 var previewHTMLSnippet = `
-<style>#preview{position:fixed;top:60px;left:40px;z-index:9999;display:none;background:#1f2329;border:1px solid #444;padding:4px 4px 8px;border-radius:8px;max-width:720px;max-height:520px;box-shadow:0 4px 16px rgba(0,0,0,0.45);color:#eee;font-size:12px;resize:both;overflow:hidden;}#preview.dragging{opacity:.85;cursor:grabbing;}#preview .pv-header{display:flex;align-items:center;justify-content:space-between;gap:6px;margin:0 2px 4px 2px;font-size:12px;user-select:none;cursor:grab;}#preview .pv-header .title{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#9ecbff;font-weight:600;}#preview button{background:#2d333b;border:1px solid #555;color:#ddd;font-size:11px;padding:2px 6px;border-radius:4px;cursor:pointer;}#preview button:hover{background:#3a424b}#preview-content{max-width:100%;max-height:470px;overflow:auto;}#preview-content img,#preview-content video{max-width:100%;max-height:470px;display:block;border-radius:4px;}#preview-content audio{width:100%;margin-top:4px;}#preview-content .audio-meta{margin-top:4px;color:#bbb;font-size:11px;font-family:monospace;}</style>
-<div id="preview"><div class="pv-header"><span class="title" id="pv-title">预览</span><button id="pv-pin" title="固定/取消固定">📌</button><button id="pv-close" title="关闭">✕</button></div><div id="preview-content"></div></div>
-<script>(function(){const pv=document.getElementById('preview');const pvc=document.getElementById('preview-content');const titleEl=document.getElementById('pv-title');const pinBtn=document.getElementById('pv-pin');const closeBtn=document.getElementById('pv-close');let activeLink=null;let hideTimer=null;let pinned=false;let dragState=null;let currentType='';function esc(s){return s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));}function build(href,text){let label=text||'';label=label.replace(/^[\[]|[\]]$/g,'');currentType='text';if(/\/image\//.test(href)){currentType='image';return '<img src="'+href+'" loading="lazy" />';}if(/\/video\//.test(href)){currentType='video';return '<video src="'+href+'" controls preload="metadata"></video>'; }if(/\/voice\//.test(href)){currentType='audio';return '<div class="audio-box"><audio src="'+href+'" controls preload="metadata"></audio><div class="audio-meta">解析中...</div></div>'; }if(/表情/.test(label)||/\.(gif|apng|webp)(\?|$)/i.test(href)){currentType='emoji';return '<img src="'+href+'" style="max-width:100%;max-height:470px;display:block;" />';}if(/\/file\//.test(href)){currentType='file';return '<div style="word-break:break-all;line-height:1.5;">文件: '+esc(label)+'<br/><a href="'+href+'" target="_blank" style="color:#61afef;">下载</a></div>'; }return '<div style="word-break:break-all;line-height:1.5;">'+esc(label)+'<br/><a href="'+href+'" target="_blank" style="color:#61afef;">打开</a></div>'; }function fmtDur(d){if(!isFinite(d)||d<=0)return '未知';const s=Math.round(d);if(s>=60){const m=Math.floor(s/60);const ss=s%60;return m+'m'+(ss<10?'0':'')+ss+'s';}return s+'s';}function parseLabelDuration(lbl){const m1=/语音\((\d+)s\)/.exec(lbl);if(m1)return m1[1]+'s';const m2=/语音\((\d+)m(\d{1,2})s\)/.exec(lbl);if(m2){const mm=m2[1],ss=m2[2];return mm+'m'+(ss.length===1?'0'+ss:ss)+'s';}return null;}function afterRender(){if(currentType==='audio'){const audio=pvc.querySelector('audio');const meta=pvc.querySelector('.audio-meta');if(audio&&meta){const label=(activeLink?activeLink.textContent:'').replace(/[\[\]]/g,'');const parsed=parseLabelDuration(label);if(parsed){meta.textContent='时长: '+parsed;}const update=()=>{if(isFinite(audio.duration)&&audio.duration>0){meta.textContent='时长: '+fmtDur(audio.duration);return true;}return false;};audio.addEventListener('loadedmetadata',()=>{update();},{once:true});let tries=0;const timer=setInterval(()=>{if(update()||++tries>6){clearInterval(timer);} },500);audio.load();}}}function adjustWidth(){if(dragState)return;const vw=window.innerWidth;const clamp=w=>Math.min(w,vw-40);switch(currentType){case'audio':pv.style.width=clamp(680)+'px';break;case'video':pv.style.width=clamp(720)+'px';break;case'file':pv.style.width=clamp(560)+'px';break;case'image':case'emoji':pv.style.width='auto';break;default:pv.style.width='420px';}}function showFor(a){clearTimeout(hideTimer);activeLink=a;const href=a.getAttribute('href');pvc.innerHTML=build(href,a.textContent||'');titleEl.textContent=a.textContent||'预览';pv.style.display='block';adjustWidth();afterRender();positionNear(a);}function positionNear(a){if(pinned||dragState)return;const rect=a.getBoundingClientRect();const pw=pv.offsetWidth;const ph=pv.offsetHeight;let x=rect.right+12;let y=rect.top;const vw=window.innerWidth;const vh=window.innerHeight;if(x+pw>vw-8)x=rect.left-pw-12;if(x<8)x=8;if(y+ph>vh-8)y=vh-ph-8;if(y<8)y=8;pv.style.left=x+'px';pv.style.top=y+'px';}function scheduleHide(){if(pinned)return;hideTimer=setTimeout(()=>{if(pinned)return;activeLink=null;pv.style.display='none';pvc.innerHTML='';},280);}document.addEventListener('mouseover',e=>{const a=e.target.closest('a.media');if(!a)return;if(a===activeLink){clearTimeout(hideTimer);return;}showFor(a);});document.addEventListener('mousemove',e=>{if(!activeLink||pinned||dragState)return;positionNear(activeLink);});pv.addEventListener('mouseenter',()=>{clearTimeout(hideTimer);});pv.addEventListener('mouseleave',()=>{scheduleHide();});document.addEventListener('mouseout',e=>{const a=e.target.closest&&e.target.closest('a.media');if(!a)return;if(pv.contains(e.relatedTarget))return;scheduleHide();});pinBtn.addEventListener('click',()=>{pinned=!pinned;pinBtn.style.opacity=pinned?1:0.6;if(!pinned){scheduleHide();}else{clearTimeout(hideTimer);}});closeBtn.addEventListener('click',()=>{pinned=false;activeLink=null;pv.style.display='none';pvc.innerHTML='';});pv.querySelector('.pv-header').addEventListener('mousedown',e=>{if(e.target===pinBtn||e.target===closeBtn)return;pinned=true;pinBtn.style.opacity=1;dragState={ox:e.clientX,oy:e.clientY,left:pv.offsetLeft,top:pv.offsetTop};pv.classList.add('dragging');e.preventDefault();});window.addEventListener('mousemove',e=>{if(!dragState)return;const dx=e.clientX-dragState.ox;const dy=e.clientY-dragState.oy;let nl=dragState.left+dx;let nt=dragState.top+dy;const vw=window.innerWidth;const vh=window.innerHeight;nl=Math.max(0,Math.min(vw-pv.offsetWidth,nl));nt=Math.max(0,Math.min(vh-pv.offsetHeight,nt));pv.style.left=nl+'px';pv.style.top=nt+'px';});window.addEventListener('mouseup',()=>{if(dragState){dragState=null;pv.classList.remove('dragging');}});window.addEventListener('keydown',e=>{if(e.key==='Escape'){pinned=false;pv.style.display='none';pvc.innerHTML='';activeLink=null;}});})();</script>`
+<style>
+#preview{position:fixed;top:60px;left:40px;z-index:9999;display:none;background:#1f2329;border:1px solid #444;padding:4px 4px 8px;border-radius:8px;max-width:720px;max-height:520px;box-shadow:0 4px 16px rgba(0,0,0,0.45);color:#eee;font-size:12px;resize:both;overflow:hidden;}
+#preview.dragging{opacity:.85;cursor:grabbing;}
+#preview .pv-header{display:flex;align-items:center;justify-content:space-between;gap:6px;margin:0 2px 4px 2px;font-size:12px;user-select:none;cursor:grab;}
+#preview .pv-header .title{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#9ecbff;font-weight:600;}
+#preview button{background:#2d333b;border:1px solid #555;color:#ddd;font-size:11px;padding:2px 6px;border-radius:4px;cursor:pointer;}
+#preview button:hover{background:#3a424b;}
+#preview-content{max-width:100%;max-height:470px;overflow:auto;}
+#preview-content img,#preview-content video{max-width:100%;max-height:470px;display:block;border-radius:4px;}
+#preview-content audio{width:100%;margin-top:4px;}
+#preview-content .audio-meta{margin-top:4px;color:#bbb;font-size:11px;font-family:monospace;}
+.voice-message{display:inline-flex;flex-direction:column;align-items:flex-start;gap:4px;background:rgba(52,152,219,0.08);padding:6px 8px;border-radius:8px;margin:2px 0;}
+.voice-message .media.voice{color:#9ecbff;}
+.voice-message .voice-stt-btn{background:#2d333b;border:1px solid #4d6277;color:#d7e2f2;font-size:11px;padding:2px 8px;border-radius:4px;cursor:pointer;transition:opacity .2s ease,background .2s ease;}
+.voice-message .voice-stt-btn:hover{background:#3a4a5b;}
+.voice-message .voice-stt-btn[disabled]{opacity:.65;cursor:wait;}
+.voice-message .voice-transcript{font-size:12px;color:#d0d7de;line-height:1.6;max-width:520px;white-space:pre-wrap;word-break:break-word;}
+.voice-message .voice-transcript[data-state="idle"]{display:none;}
+.voice-message .voice-text{white-space:pre-wrap;word-break:break-word;}
+.voice-message .voice-text.voice-empty{color:#9aa7b7;font-style:italic;}
+.voice-message .voice-segments{margin-top:6px;display:flex;flex-direction:column;gap:4px;}
+.voice-message .voice-segment-time{font-size:11px;color:#9aa7b7;}
+.voice-message .voice-transcript .voice-meta{margin-top:4px;font-size:11px;color:#9aa7b7;}
+.voice-message .voice-transcript .voice-segment{margin-top:4px;padding:4px 6px;border-left:2px solid rgba(158,203,255,0.4);background:rgba(255,255,255,0.04);border-radius:4px;}
+.voice-message .voice-transcript .voice-segment span{display:block;}
+</style>
+<div id="preview">
+  <div class="pv-header">
+    <span class="title" id="pv-title">预览</span>
+    <button id="pv-pin" title="固定/取消固定">📌</button>
+    <button id="pv-close" title="关闭">✕</button>
+  </div>
+  <div id="preview-content"></div>
+</div>
+<script>
+(function () {
+  const pv = document.getElementById('preview');
+  const pvc = document.getElementById('preview-content');
+  const titleEl = document.getElementById('pv-title');
+  const pinBtn = document.getElementById('pv-pin');
+  const closeBtn = document.getElementById('pv-close');
+  let activeLink = null;
+  let hideTimer = null;
+  let pinned = false;
+  let dragState = null;
+  let currentType = '';
+
+  const esc = (s) => (s || '').replace(/[&<>"']/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c] || c));
+
+  function build(href, text) {
+    let label = text || '';
+    label = label.replace(/^[\[]|[\]]$/g, '');
+    currentType = 'text';
+
+    if (/\/image\//.test(href)) {
+      currentType = 'image';
+      return '<img src="' + href + '" loading="lazy" />';
+    }
+    if (/\/video\//.test(href)) {
+      currentType = 'video';
+      return '<video src="' + href + '" controls preload="metadata"></video>';
+    }
+    if (/\/voice\//.test(href)) {
+      currentType = 'audio';
+      return '<div class="audio-box"><audio src="' + href + '" controls preload="metadata"></audio><div class="audio-meta">解析中...</div></div>';
+    }
+    if (/表情/.test(label) || /\.(gif|apng|webp)(\?|$)/i.test(href)) {
+      currentType = 'emoji';
+      return '<img src="' + href + '" style="max-width:100%;max-height:470px;display:block;" />';
+    }
+    if (/\/file\//.test(href)) {
+      currentType = 'file';
+      return '<div style="word-break:break-all;line-height:1.5;">文件: ' + esc(label) + '<br/><a href="' + href + '" target="_blank" style="color:#61afef;">下载</a></div>';
+    }
+    return '<div style="word-break:break-all;line-height:1.5;">' + esc(label) + '<br/><a href="' + href + '" target="_blank" style="color:#61afef;">打开</a></div>';
+  }
+
+  function fmtDur(d) {
+    if (!isFinite(d) || d <= 0) return '未知';
+    const s = Math.round(d);
+    if (s >= 60) {
+      const m = Math.floor(s / 60);
+      const ss = s % 60;
+      return m + 'm' + (ss < 10 ? '0' : '') + ss + 's';
+    }
+    return s + 's';
+  }
+
+  function parseLabelDuration(lbl) {
+    const m1 = /语音\((\d+)s\)/.exec(lbl);
+    if (m1) return m1[1] + 's';
+    const m2 = /语音\((\d+)m(\d{1,2})s\)/.exec(lbl);
+    if (m2) {
+      const mm = m2[1];
+      const ss = m2[2];
+      return mm + 'm' + (ss.length === 1 ? '0' + ss : ss) + 's';
+    }
+    return null;
+  }
+
+  function afterRender() {
+    if (currentType !== 'audio') return;
+    const audio = pvc.querySelector('audio');
+    const meta = pvc.querySelector('.audio-meta');
+    if (!audio || !meta) return;
+
+    const label = (activeLink ? activeLink.textContent : '').replace(/[\[\]]/g, '');
+    const parsed = parseLabelDuration(label);
+    if (parsed) {
+      meta.textContent = '时长: ' + parsed;
+    }
+
+    const update = () => {
+      if (isFinite(audio.duration) && audio.duration > 0) {
+        meta.textContent = '时长: ' + fmtDur(audio.duration);
+        return true;
+      }
+      return false;
+    };
+
+    audio.addEventListener('loadedmetadata', () => update(), { once: true });
+
+    let attempts = 0;
+    const timer = setInterval(() => {
+      if (update() || ++attempts > 6) {
+        clearInterval(timer);
+      }
+    }, 500);
+
+    audio.load();
+  }
+
+  function adjustWidth() {
+    if (dragState) return;
+    const vw = window.innerWidth;
+    const clamp = (w) => Math.min(w, vw - 40);
+    switch (currentType) {
+      case 'audio':
+        pv.style.width = clamp(680) + 'px';
+        break;
+      case 'video':
+        pv.style.width = clamp(720) + 'px';
+        break;
+      case 'file':
+        pv.style.width = clamp(560) + 'px';
+        break;
+      case 'image':
+      case 'emoji':
+        pv.style.width = 'auto';
+        break;
+      default:
+        pv.style.width = '420px';
+    }
+  }
+
+  function positionNear(anchor) {
+    if (pinned || dragState) return;
+    const rect = anchor.getBoundingClientRect();
+    const pw = pv.offsetWidth;
+    const ph = pv.offsetHeight;
+    let x = rect.right + 12;
+    let y = rect.top;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    if (x + pw > vw - 8) x = rect.left - pw - 12;
+    if (x < 8) x = 8;
+    if (y + ph > vh - 8) y = vh - ph - 8;
+    if (y < 8) y = 8;
+
+    pv.style.left = x + 'px';
+    pv.style.top = y + 'px';
+  }
+
+  function showFor(anchor) {
+    clearTimeout(hideTimer);
+    activeLink = anchor;
+    const href = anchor.getAttribute('href');
+    pvc.innerHTML = build(href, anchor.textContent || '');
+    titleEl.textContent = anchor.textContent || '预览';
+    pv.style.display = 'block';
+    adjustWidth();
+    afterRender();
+    positionNear(anchor);
+  }
+
+  function scheduleHide() {
+    if (pinned) return;
+    hideTimer = setTimeout(() => {
+      if (pinned) return;
+      activeLink = null;
+      pv.style.display = 'none';
+      pvc.innerHTML = '';
+    }, 280);
+  }
+
+  document.addEventListener('mouseover', (event) => {
+    const anchor = event.target.closest('a.media');
+    if (!anchor) return;
+    if (anchor === activeLink) {
+      clearTimeout(hideTimer);
+      return;
+    }
+    showFor(anchor);
+  });
+
+  document.addEventListener('mousemove', () => {
+    if (!activeLink || pinned || dragState) return;
+    positionNear(activeLink);
+  });
+
+  pv.addEventListener('mouseenter', () => clearTimeout(hideTimer));
+  pv.addEventListener('mouseleave', () => scheduleHide());
+
+  document.addEventListener('mouseout', (event) => {
+    const anchor = event.target.closest && event.target.closest('a.media');
+    if (!anchor) return;
+    if (pv.contains(event.relatedTarget)) return;
+    scheduleHide();
+  });
+
+  pinBtn.addEventListener('click', () => {
+    pinned = !pinned;
+    pinBtn.style.opacity = pinned ? 1 : 0.6;
+    if (!pinned) {
+      scheduleHide();
+    } else {
+      clearTimeout(hideTimer);
+    }
+  });
+
+  closeBtn.addEventListener('click', () => {
+    pinned = false;
+    activeLink = null;
+    pv.style.display = 'none';
+    pvc.innerHTML = '';
+  });
+
+  pv.querySelector('.pv-header').addEventListener('mousedown', (event) => {
+    if (event.target === pinBtn || event.target === closeBtn) return;
+    pinned = true;
+    pinBtn.style.opacity = 1;
+    dragState = {
+      ox: event.clientX,
+      oy: event.clientY,
+      left: pv.offsetLeft,
+      top: pv.offsetTop,
+    };
+    pv.classList.add('dragging');
+    event.preventDefault();
+  });
+
+  window.addEventListener('mousemove', (event) => {
+    if (!dragState) return;
+    const dx = event.clientX - dragState.ox;
+    const dy = event.clientY - dragState.oy;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    let nl = dragState.left + dx;
+    let nt = dragState.top + dy;
+    nl = Math.max(0, Math.min(vw - pv.offsetWidth, nl));
+    nt = Math.max(0, Math.min(vh - pv.offsetHeight, nt));
+    pv.style.left = nl + 'px';
+    pv.style.top = nt + 'px';
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (!dragState) return;
+    dragState = null;
+    pv.classList.remove('dragging');
+  });
+
+  window.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      pinned = false;
+      pv.style.display = 'none';
+      pvc.innerHTML = '';
+      activeLink = null;
+    }
+  });
+
+  const voiceCache = new Map();
+
+  function ensureTranscriptState() {
+    document.querySelectorAll('.voice-message .voice-transcript').forEach((node) => {
+      if (!node.dataset.state) {
+        node.dataset.state = 'idle';
+      }
+    });
+  }
+
+  function voiceKeyFor(button) {
+    let key = (button.dataset.voiceKey || '').trim();
+    if (key) return key;
+
+    const container = button.closest('.voice-message');
+    if (!container) return '';
+
+    key = (container.dataset.voiceKey || '').trim();
+    if (key) return key;
+
+    const link = container.querySelector('a.media.voice');
+    if (!link) return '';
+    const href = link.getAttribute('href') || '';
+    const idx = href.indexOf('/voice/');
+    if (idx < 0) return '';
+    let part = href.slice(idx + 7);
+    const cut = part.search(/[?#]/);
+    if (cut >= 0) {
+      part = part.slice(0, cut);
+    }
+    return part.trim();
+  }
+
+  function formatSeconds(value) {
+    const num = Number(value);
+    if (!isFinite(num) || num <= 0) {
+      return '0s';
+    }
+    if (num >= 60) {
+      const m = Math.floor(num / 60);
+      const s = Math.round(num % 60);
+      return m + 'm' + (s < 10 ? '0' : '') + s + 's';
+    }
+    if (num < 1) {
+      return num.toFixed(2) + 's';
+    }
+    return Math.round(num) + 's';
+  }
+
+  function renderVoiceTranscript(target, data) {
+    if (!target) return;
+    const pieces = [];
+    const rawText = data && typeof data.text === 'string' ? data.text.trim() : '';
+    if (rawText) {
+      pieces.push('<div class="voice-text">' + esc(rawText) + '</div>');
+    } else {
+      pieces.push('<div class="voice-text voice-empty">未识别到文本</div>');
+    }
+
+    const segments = Array.isArray(data && data.segments) ? data.segments : [];
+    if (segments.length) {
+      const rendered = segments
+        .map((segment) => {
+          const start = formatSeconds(segment && segment.start);
+          const end = formatSeconds(segment && segment.end);
+          const caption = segment && typeof segment.text === 'string' ? segment.text.trim() : '';
+          return '<div class="voice-segment"><span class="voice-segment-time">' + start + ' - ' + end + '</span><span>' + esc(caption) + '</span></div>';
+        })
+        .join('');
+      pieces.push('<div class="voice-segments">' + rendered + '</div>');
+    }
+
+    const meta = [];
+    if (data && data.language) {
+      meta.push('语言: ' + esc(String(data.language)));
+    }
+    if (data && typeof data.duration === 'number' && isFinite(data.duration) && data.duration > 0) {
+      meta.push('音频: ' + formatSeconds(data.duration));
+    }
+    if (meta.length) {
+      pieces.push('<div class="voice-meta">' + meta.join(' · ') + '</div>');
+    }
+
+    target.innerHTML = pieces.join('');
+    target.dataset.state = 'ready';
+  }
+
+  async function requestVoice(button) {
+    const container = button.closest('.voice-message');
+    const transcript = container ? container.querySelector('.voice-transcript') : null;
+    if (transcript && !transcript.dataset.state) {
+      transcript.dataset.state = 'idle';
+    }
+
+    const key = voiceKeyFor(button);
+    if (!key) {
+      if (transcript) {
+        transcript.dataset.state = 'error';
+        transcript.textContent = '无法识别语音标识';
+      }
+      return;
+    }
+
+    const cached = voiceCache.get(key);
+    if (cached) {
+      renderVoiceTranscript(transcript, cached);
+      button.disabled = false;
+      button.textContent = '查看文字';
+      button.dataset.state = 'done';
+      return;
+    }
+
+    const originalLabel = button.dataset.originalText || button.textContent || '语音转文字';
+    button.dataset.originalText = originalLabel;
+    button.disabled = true;
+    button.dataset.state = 'loading';
+    button.textContent = '转文字中…';
+
+    if (transcript) {
+      transcript.dataset.state = 'loading';
+      transcript.textContent = '语音识别进行中…';
+    }
+
+    try {
+      const response = await fetch('/api/v1/voice/transcribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ key }),
+      });
+      if (!response.ok) {
+        throw new Error('HTTP ' + response.status);
+      }
+      const payload = await response.json();
+      voiceCache.set(key, payload);
+      renderVoiceTranscript(transcript, payload);
+      button.disabled = false;
+      button.textContent = '已转文字';
+      button.dataset.state = 'done';
+    } catch (error) {
+      button.disabled = false;
+      button.textContent = '重试转文字';
+      button.dataset.state = 'error';
+      if (transcript) {
+        transcript.dataset.state = 'error';
+        transcript.textContent = '转文字失败: ' + (error && error.message ? error.message : '未知错误');
+      }
+    }
+  }
+
+  document.addEventListener('click', (event) => {
+    const button = event.target.closest('.voice-stt-btn');
+    if (!button) return;
+    event.preventDefault();
+    requestVoice(button);
+  });
+
+  const bootstrapVoice = () => {
+    ensureTranscriptState();
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bootstrapVoice);
+  } else {
+    bootstrapVoice();
+  }
+
+  window.ChatlogSpeech = window.ChatlogSpeech || {};
+  window.ChatlogSpeech.refreshVoiceMessages = bootstrapVoice;
+  window.ChatlogSpeech.requestVoice = requestVoice;
+})();
+</script>`
 
 func (s *Service) initRouter() {
 	s.initBaseRouter()
@@ -77,7 +527,67 @@ func (s *Service) initAPIRouter() {
 		api.GET("/diary", s.handleDiary)
 		api.GET("/dashboard", s.handleDashboard)
 		api.GET("/search", s.handleSearch)
+		api.POST("/voice/transcribe", s.handleVoiceTranscribe)
 	}
+}
+
+func (s *Service) handleVoiceTranscribe(c *gin.Context) {
+	if s.speech == nil {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "speech-to-text not enabled"})
+		return
+	}
+
+	var req struct {
+		Key string `json:"key"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request payload", "detail": err.Error()})
+		return
+	}
+
+	key := strings.TrimSpace(req.Key)
+	if key == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "voice key is required"})
+		return
+	}
+
+	media, err := s.db.GetMedia("voice", key)
+	if err != nil {
+		errors.Err(c, err)
+		return
+	}
+	if media == nil || len(media.Data) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "voice media not found"})
+		return
+	}
+
+	result, err := s.speech.TranscribeSilk(c.Request.Context(), media.Data, s.speechOpts)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "transcription failed", "detail": err.Error()})
+		return
+	}
+
+	segments := make([]gin.H, 0, len(result.Segments))
+	for _, seg := range result.Segments {
+		segments = append(segments, gin.H{
+			"id":    seg.ID,
+			"start": seg.Start.Seconds(),
+			"end":   seg.End.Seconds(),
+			"text":  seg.Text,
+		})
+	}
+
+	response := gin.H{
+		"text":     result.Text,
+		"language": result.Language,
+		"duration": result.Duration.Seconds(),
+		"segments": segments,
+	}
+	if s.speechCfg != nil {
+		response["model"] = strings.TrimSpace(s.speechCfg.Model)
+	}
+
+	c.JSON(http.StatusOK, response)
 }
 
 func (s *Service) initMCPRouter() {
@@ -540,7 +1050,7 @@ func (s *Service) handleDashboard(c *gin.Context) {
 					Messages: v.MsgCount,
 					Avatar:   s.composeAvatarURL(k),
 				})
-				added++
+				added++;
 			}
 		}
 	}
@@ -1682,6 +2192,23 @@ func messageHTMLPlaceholder(m *model.Message) string {
 			anchorText = "[" + escapedFull + "]"
 		} else if left == "文件" && rest != "" { // 文件保留文件名
 			anchorText = "[文件]" + template.HTMLEscapeString(rest)
+		} else if strings.HasPrefix(left, "语音") {
+			anchorText = "[" + template.HTMLEscapeString(left) + "]"
+			voiceURL := template.HTMLEscapeString(url)
+			voiceKey := ""
+			if idx := strings.Index(url, "/voice/"); idx >= 0 {
+				keyPart := url[idx+len("/voice/"):]
+				if cut := strings.IndexAny(keyPart, "?#"); cut >= 0 {
+					keyPart = keyPart[:cut]
+				}
+				voiceKey = keyPart
+			}
+			escapedKey := template.HTMLEscapeString(voiceKey)
+			anchor := `<a class="media voice" href="` + voiceURL + `" target="_blank">` + anchorText + `</a>`
+			button := `<button class="voice-stt-btn" data-voice-key="` + escapedKey + `" data-voice-url="` + voiceURL + `">语音转文字</button>`
+			transcript := `<span class="voice-transcript" data-state="idle"></span>`
+			container := `<span class="voice-message" data-voice-key="` + escapedKey + `" data-voice-url="` + voiceURL + `">` + anchor + ` ` + button + ` ` + transcript + `</span>`
+			return container
 		} else {
 			anchorText = "[" + template.HTMLEscapeString(left) + "]"
 		}

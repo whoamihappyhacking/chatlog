@@ -5,6 +5,7 @@ type TUIConfig struct {
 	LastAccount string          `mapstructure:"last_account" json:"last_account"`
 	History     []ProcessConfig `mapstructure:"history" json:"history"`
 	Webhook     *Webhook        `mapstructure:"webhook" json:"webhook"`
+	Speech      *SpeechConfig   `mapstructure:"speech" json:"speech"`
 }
 
 var TUIDefaults = map[string]any{}
