@@ -1,11 +1,5 @@
-//go:build cgo
-
 package whispercpp
 
-/*
-#cgo CFLAGS: -I${SRCDIR}/../../../third_party/whisper/include
-#cgo LDFLAGS: -L${SRCDIR}/../../../third_party/whisper/lib -lwhisper -lggml -lstdc++ -lm
-*/
 import "C"
 
 import (

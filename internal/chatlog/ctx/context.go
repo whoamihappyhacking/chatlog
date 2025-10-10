@@ -186,10 +186,7 @@ func (c *Context) GetWebhook() *conf.Webhook {
 }
 
 func (c *Context) GetSpeech() *conf.SpeechConfig {
-	if c == nil || c.conf == nil {
-		return nil
-	}
-	return c.conf.Speech
+	return nil
 }
 
 func (c *Context) SetHTTPEnabled(enabled bool) {

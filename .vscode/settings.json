@@ -52,7 +52,8 @@
 		"variant": "cpp"
 	},
 	"go.toolsEnvVars": {
+		"CGO_ENABLED": "1",
 		"CGO_CFLAGS": "-I${workspaceFolder}/third_party/whisper/include",
-		"CGO_LDFLAGS": "-L${workspaceFolder}/third_party/whisper/lib -lwhisper -lggml -lstdc++ -lm"
+		"CGO_LDFLAGS": "-L${workspaceFolder}/third_party/whisper/lib"
 	}
 }
