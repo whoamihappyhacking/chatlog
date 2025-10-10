@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
-	"math"
 	"regexp"
 	"sort"
 	"strings"
@@ -423,294 +422,6 @@ func (ds *DataSource) GetMessages(ctx context.Context, startTime, endTime time.T
 	return filteredMessages, nil
 }
 
-func (ds *DataSource) SearchMessages(ctx context.Context, req *model.SearchRequest) (*model.SearchResponse, error) {
-	if req == nil {
-		return nil, errors.InvalidArg("request")
-	}
-
-	ftsQuery := util.BuildFTSQuery(req.Query)
-	if ftsQuery == "" {
-		return &model.SearchResponse{
-			Total:      0,
-			Hits:       []*model.SearchHit{},
-			DurationMs: 0,
-			Limit:      req.Limit,
-			Offset:     req.Offset,
-			Query:      req.Query,
-			Talker:     req.Talker,
-			Sender:     req.Sender,
-			Start:      req.Start,
-			End:        req.End,
-		}, nil
-	}
-
-	talkers := util.Str2List(req.Talker, ",")
-	if len(talkers) == 0 {
-		var err error
-		talkers, err = ds.collectAllTalkers(ctx)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if len(talkers) == 0 {
-		return &model.SearchResponse{
-			Total:      0,
-			Hits:       []*model.SearchHit{},
-			DurationMs: 0,
-			Limit:      req.Limit,
-			Offset:     req.Offset,
-			Query:      req.Query,
-			Talker:     req.Talker,
-			Sender:     req.Sender,
-			Start:      req.Start,
-			End:        req.End,
-		}, nil
-	}
-
-	limit := req.Limit
-	if limit <= 0 {
-		limit = 20
-	}
-	if limit > 200 {
-		limit = 200
-	}
-	offset := req.Offset
-	if offset < 0 {
-		offset = 0
-	}
-	req.Limit = limit
-	req.Offset = offset
-
-	budget := limit + offset + 20
-	if budget < 50 {
-		budget = 50
-	}
-	if budget > 1000 {
-		budget = 1000
-	}
-
-	startRange := req.Start
-	endRange := req.End
-	if startRange.IsZero() {
-		startRange = time.Unix(0, 0)
-	}
-	if endRange.IsZero() {
-		endRange = time.Now().Add(24 * time.Hour)
-	}
-	if endRange.Before(startRange) {
-		startRange, endRange = endRange, startRange
-	}
-
-	startSeq := int64(0)
-	if !req.Start.IsZero() {
-		startSeq = req.Start.Unix() * 1000
-	}
-	endSeq := int64(math.MaxInt64)
-	if !req.End.IsZero() {
-		endSeq = req.End.Unix() * 1000
-	}
-	if endSeq < startSeq {
-		startSeq, endSeq = endSeq, startSeq
-	}
-
-	senders := util.Str2List(req.Sender, ",")
-	senderFilter := len(senders) > 0
-	senderSet := make(map[string]struct{}, len(senders))
-	for _, s := range senders {
-		senderSet[s] = struct{}{}
-	}
-
-	startTs := time.Now()
-	allHits := make([]*model.SearchHit, 0, limit+offset)
-	seenSeq := make(map[int64]struct{})
-
-	dbInfos := ds.getDBInfosForTimeRange(startRange, endRange)
-	if len(dbInfos) == 0 {
-		return &model.SearchResponse{
-			Total:      0,
-			Hits:       []*model.SearchHit{},
-			DurationMs: time.Since(startTs).Milliseconds(),
-			Limit:      limit,
-			Offset:     offset,
-			Query:      req.Query,
-			Talker:     req.Talker,
-			Sender:     req.Sender,
-			Start:      req.Start,
-			End:        req.End,
-		}, nil
-	}
-
-	for _, dbInfo := range dbInfos {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-
-		db, err := ds.dbm.OpenDB(dbInfo.FilePath)
-		if err != nil {
-			log.Err(err).Msgf("数据库 %s 未打开", dbInfo.FilePath)
-			continue
-		}
-
-		for _, talker := range talkers {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-
-			err := func() error {
-				tx, err := db.BeginTx(ctx, nil)
-				if err != nil {
-					return errors.QueryFailed("begin tx", err)
-				}
-				defer func() {
-					_ = tx.Rollback()
-				}()
-
-				if _, err := tx.ExecContext(ctx, `CREATE TEMP TABLE IF NOT EXISTS chatlog_msg_base(seq INTEGER PRIMARY KEY, content TEXT)`); err != nil {
-					return errors.QueryFailed("create temp table", err)
-				}
-				if _, err := tx.ExecContext(ctx, `DELETE FROM chatlog_msg_base`); err != nil {
-					return errors.QueryFailed("cleanup temp table", err)
-				}
-
-				conditions := []string{"Sequence >= ?", "Sequence <= ?", "StrContent IS NOT NULL", "LENGTH(StrContent) > 0"}
-				args := []interface{}{startSeq, endSeq}
-				if talkerID, ok := dbInfo.TalkerMap[talker]; ok {
-					conditions = append(conditions, "TalkerId = ?")
-					args = append(args, talkerID)
-				} else {
-					conditions = append(conditions, "StrTalker = ?")
-					args = append(args, talker)
-				}
-
-				insertSQL := fmt.Sprintf(`INSERT OR IGNORE INTO chatlog_msg_base(seq, content)
-					SELECT Sequence, StrContent FROM MSG WHERE %s`, strings.Join(conditions, " AND "))
-				if _, err := tx.ExecContext(ctx, insertSQL, args...); err != nil {
-					return errors.QueryFailed("insert temp base", err)
-				}
-
-				if _, err := tx.ExecContext(ctx, `CREATE VIRTUAL TABLE IF NOT EXISTS temp.chatlog_msg_fts USING fts5(content, tokenize='unicode61')`); err != nil {
-					return errors.QueryFailed("create fts", err)
-				}
-				if _, err := tx.ExecContext(ctx, `DELETE FROM temp.chatlog_msg_fts`); err != nil {
-					return errors.QueryFailed("cleanup fts", err)
-				}
-				if _, err := tx.ExecContext(ctx, `INSERT INTO temp.chatlog_msg_fts(rowid, content) SELECT seq, content FROM chatlog_msg_base`); err != nil {
-					return errors.QueryFailed("insert fts", err)
-				}
-
-				rows, err := tx.QueryContext(ctx, `
-					SELECT m.MsgSvrID, m.Sequence, m.CreateTime, m.StrTalker, m.IsSender,
-					       m.Type, m.SubType, m.StrContent, m.CompressContent, m.BytesExtra,
-					       highlight(chatlog_msg_fts, 0, '<mark>', '</mark>') AS snippet,
-					       bm25(chatlog_msg_fts) AS score
-					FROM temp.chatlog_msg_fts
-					JOIN MSG m ON m.Sequence = chatlog_msg_fts.rowid
-					WHERE chatlog_msg_fts MATCH ?
-					ORDER BY score
-					LIMIT ?
-				`, ftsQuery, budget)
-				if err != nil {
-					return errors.QueryFailed("fts query", err)
-				}
-				defer rows.Close()
-
-				for rows.Next() {
-					var msg model.MessageV3
-					var compressContent []byte
-					var bytesExtra []byte
-					var snippet sql.NullString
-					var score sql.NullFloat64
-					if err := rows.Scan(&msg.MsgSvrID, &msg.Sequence, &msg.CreateTime, &msg.StrTalker, &msg.IsSender,
-						&msg.Type, &msg.SubType, &msg.StrContent, &compressContent, &bytesExtra, &snippet, &score); err != nil {
-						return errors.ScanRowFailed(err)
-					}
-					msg.CompressContent = compressContent
-					msg.BytesExtra = bytesExtra
-
-					message := msg.Wrap()
-					if senderFilter {
-						if _, ok := senderSet[message.Sender]; !ok {
-							continue
-						}
-					}
-					if _, dup := seenSeq[message.Seq]; dup {
-						continue
-					}
-					seenSeq[message.Seq] = struct{}{}
-
-					hitSnippet := ""
-					if snippet.Valid {
-						hitSnippet = snippet.String
-					}
-					hitScore := 0.0
-					if score.Valid {
-						hitScore = score.Float64
-					}
-					allHits = append(allHits, &model.SearchHit{Message: message, Snippet: hitSnippet, Score: hitScore})
-				}
-
-				if err := rows.Err(); err != nil {
-					return errors.QueryFailed("fts rows", err)
-				}
-
-				if err := tx.Commit(); err != nil {
-					return errors.QueryFailed("commit tx", err)
-				}
-				return nil
-			}()
-
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-
-	if len(allHits) == 0 {
-		return &model.SearchResponse{
-			Total:      0,
-			Hits:       []*model.SearchHit{},
-			DurationMs: time.Since(startTs).Milliseconds(),
-			Limit:      limit,
-			Offset:     offset,
-			Query:      req.Query,
-			Talker:     req.Talker,
-			Sender:     req.Sender,
-			Start:      req.Start,
-			End:        req.End,
-		}, nil
-	}
-
-	sort.SliceStable(allHits, func(i, j int) bool {
-		if allHits[i].Score == allHits[j].Score {
-			return allHits[i].Message.Seq < allHits[j].Message.Seq
-		}
-		return allHits[i].Score < allHits[j].Score
-	})
-
-	total := len(allHits)
-	if offset > total {
-		offset = total
-	}
-	endIndex := offset + limit
-	if endIndex > total {
-		endIndex = total
-	}
-	paged := allHits[offset:endIndex]
-
-	return &model.SearchResponse{
-		Total:      total,
-		Hits:       paged,
-		DurationMs: time.Since(startTs).Milliseconds(),
-		Limit:      limit,
-		Offset:     offset,
-		Query:      req.Query,
-		Talker:     req.Talker,
-		Sender:     req.Sender,
-		Start:      req.Start,
-		End:        req.End,
-	}, nil
-}
-
 func (ds *DataSource) GetDatasetFingerprint(context.Context) (string, error) {
 	return ds.dbm.FingerprintForGroups(Message)
 }
@@ -820,6 +531,130 @@ func (ds *DataSource) collectAllTalkers(ctx context.Context) ([]string, error) {
 	sort.Strings(talkers)
 	ds.cacheTalkers(talkers)
 	return talkers, nil
+}
+
+// ListTalkers 返回所有对话用户名（联系人 + 群聊），供索引使用
+func (ds *DataSource) ListTalkers(ctx context.Context) ([]string, error) {
+	return ds.collectAllTalkers(ctx)
+}
+
+// IterateMessages 按 talker 枚举消息并交给处理函数，供 Bleve 索引使用
+func (ds *DataSource) IterateMessages(ctx context.Context, talkers []string, handler func(*model.Message) error) error {
+	if handler == nil {
+		return errors.InvalidArg("handler")
+	}
+
+	if len(talkers) == 0 {
+		var err error
+		talkers, err = ds.collectAllTalkers(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	if len(talkers) == 0 {
+		return nil
+	}
+
+	uniqueTalkers := make([]string, 0, len(talkers))
+	seen := make(map[string]struct{}, len(talkers))
+	for _, t := range talkers {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			continue
+		}
+		if _, ok := seen[t]; ok {
+			continue
+		}
+		seen[t] = struct{}{}
+		uniqueTalkers = append(uniqueTalkers, t)
+	}
+	if len(uniqueTalkers) == 0 {
+		return nil
+	}
+
+	for _, info := range ds.messageInfos {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		db, err := ds.dbm.OpenDB(info.FilePath)
+		if err != nil {
+			log.Debug().Err(err).Msgf("open message db failed: %s", info.FilePath)
+			continue
+		}
+
+		for _, talker := range uniqueTalkers {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+
+			conditions := []string{"StrContent IS NOT NULL"}
+			args := make([]interface{}, 0, 1)
+			if talkerID, ok := info.TalkerMap[talker]; ok {
+				conditions = append(conditions, "TalkerId = ?")
+				args = append(args, talkerID)
+			} else {
+				conditions = append(conditions, "StrTalker = ?")
+				args = append(args, talker)
+			}
+
+			query := fmt.Sprintf(`
+				SELECT MsgSvrID, Sequence, CreateTime, StrTalker, IsSender,
+				       Type, SubType, StrContent, CompressContent, BytesExtra
+				FROM MSG
+				WHERE %s
+				ORDER BY Sequence ASC
+			`, strings.Join(conditions, " AND "))
+
+			rows, err := db.QueryContext(ctx, query, args...)
+			if err != nil {
+				if strings.Contains(err.Error(), "no such table") {
+					continue
+				}
+				return errors.QueryFailed("iterate messages", err)
+			}
+
+			for rows.Next() {
+				if err := ctx.Err(); err != nil {
+					rows.Close()
+					return err
+				}
+				var msg model.MessageV3
+				var compressContent []byte
+				var bytesExtra []byte
+				if scanErr := rows.Scan(
+					&msg.MsgSvrID,
+					&msg.Sequence,
+					&msg.CreateTime,
+					&msg.StrTalker,
+					&msg.IsSender,
+					&msg.Type,
+					&msg.SubType,
+					&msg.StrContent,
+					&compressContent,
+					&bytesExtra,
+				); scanErr != nil {
+					rows.Close()
+					return errors.ScanRowFailed(scanErr)
+				}
+				msg.CompressContent = compressContent
+				msg.BytesExtra = bytesExtra
+
+				wrapped := msg.Wrap()
+				if err := handler(wrapped); err != nil {
+					rows.Close()
+					return err
+				}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return errors.QueryFailed("iterate message rows", err)
+			}
+			rows.Close()
+		}
+	}
+
+	return nil
 }
 
 // GetContacts 实现获取联系人信息的方法

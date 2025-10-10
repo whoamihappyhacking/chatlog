@@ -17,7 +17,6 @@ type DataSource interface {
 
 	// 消息
 	GetMessages(ctx context.Context, startTime, endTime time.Time, talker string, sender string, keyword string, limit, offset int) ([]*model.Message, error)
-	SearchMessages(ctx context.Context, req *model.SearchRequest) (*model.SearchResponse, error)
 	GetDatasetFingerprint(ctx context.Context) (string, error)
 
 	// 联系人

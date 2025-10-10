@@ -511,10 +511,6 @@ func (ds *DataSource) GetMessages(ctx context.Context, startTime, endTime time.T
 	return filteredMessages, nil
 }
 
-func (ds *DataSource) SearchMessages(ctx context.Context, req *model.SearchRequest) (*model.SearchResponse, error) {
-	return nil, errors.SearchNotSupported("darwin", 3)
-}
-
 // 从表名中提取 talker
 func extractTalkerFromTableName(tableName string) string {
 

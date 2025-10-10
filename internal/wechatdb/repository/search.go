@@ -25,12 +25,22 @@ func (r *Repository) SearchMessages(ctx context.Context, req *model.SearchReques
 	nReq.Talker = normalizedTalker
 	nReq.Sender = normalizedSender
 
-	resp, err := r.ds.SearchMessages(ctx, nReq)
+	if nReq.Limit <= 0 {
+		nReq.Limit = 20
+	}
+	if nReq.Limit > 200 {
+		nReq.Limit = 200
+	}
+	if nReq.Offset < 0 {
+		nReq.Offset = 0
+	}
+
+	resp, err := r.searchMessagesWithIndex(ctx, nReq)
 	if err != nil {
 		return nil, err
 	}
 	if resp == nil {
-		return &model.SearchResponse{Hits: []*model.SearchHit{}, Limit: nReq.Limit, Offset: nReq.Offset}, nil
+		resp = &model.SearchResponse{Hits: []*model.SearchHit{}, Limit: nReq.Limit, Offset: nReq.Offset}
 	}
 
 	// Enrich message metadata（头像、群昵称、显示名等）

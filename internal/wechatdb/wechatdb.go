@@ -2,6 +2,7 @@ package wechatdb
 
 import (
 	"context"
+	"path/filepath"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -50,7 +51,8 @@ func (w *DB) Initialize() error {
 		return err
 	}
 
-	w.repo, err = repository.New(w.ds)
+	indexPath := filepath.Join(w.path, "indexes", "messages")
+	w.repo, err = repository.New(w.ds, indexPath)
 	if err != nil {
 		return err
 	}

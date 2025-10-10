@@ -640,8 +640,9 @@
 					<div class="tab-content" id="search-tab">
 						<div class="api-description">
 							<p>
-								使用全文索引在指定会话中查找消息。<span
-									class="badge"
+								使用
+								<strong>Bleve</strong>
+								在指定会话中查找消息。<span class="badge"
 									>GET /api/v1/search</span
 								>
 							</p>
@@ -649,18 +650,18 @@
 						<div class="form-group">
 							<label for="search-query"
 								>关键词：<span class="required-field"
-									>必填</span
+									>*</span
 								></label
 							>
 							<input
 								id="search-query"
 								type="text"
-								placeholder="支持空格分词，可使用 AND/OR/NOT 等语法"
+								placeholder="支持空格分词"
 							/>
 						</div>
 						<div class="form-group">
 							<label for="search-talker"
-								>会话 ID（可多个，英文逗号分隔）：<span
+								>聊天对象（可多个，英文逗号分隔）：<span
 									class="optional-param"
 									>可选</span
 								></label
@@ -668,16 +669,12 @@
 							<input
 								id="search-talker"
 								type="text"
-								placeholder="留空默认搜索所有联系人与群聊"
+								placeholder="wxid、群ID、备注名或昵称 (留空输出所有)"
 							/>
-							<div class="form-hint">
-								可以从“最近会话”或“群聊”接口获取对应的
-								ID；如留空将检索所有会话。
-							</div>
 						</div>
 						<div class="form-group">
 							<label for="search-sender"
-								>发送者筛选：<span class="optional-param"
+								>发送者：<span class="optional-param"
 									>可选</span
 								></label
 							>
@@ -699,12 +696,12 @@
 								<input type="date" id="search-end-date" />
 							</div>
 							<div class="form-hint">
-								可选择开始日期和结束日期；留空表示不限制时间范围。
+								留空表示不限制时间范围。
 							</div>
 						</div>
 						<div class="form-group">
 							<label for="search-limit"
-								>Limit：<span class="optional-param"
+								>返回数量：<span class="optional-param"
 									>可选</span
 								></label
 							>
@@ -718,7 +715,7 @@
 						</div>
 						<div class="form-group">
 							<label for="search-offset"
-								>Offset：<span class="optional-param"
+								>偏移量：<span class="optional-param"
 									>可选</span
 								></label
 							>

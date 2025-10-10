@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"sync"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/rs/zerolog/log"
@@ -9,11 +10,21 @@ import (
 	"github.com/sjzar/chatlog/internal/errors"
 	"github.com/sjzar/chatlog/internal/model"
 	"github.com/sjzar/chatlog/internal/wechatdb/datasource"
+	"github.com/sjzar/chatlog/internal/wechatdb/indexer"
 )
 
 // Repository 实现了 repository.Repository 接口
 type Repository struct {
 	ds datasource.DataSource
+
+	indexPath        string
+	index            *indexer.Index
+	indexMu          sync.Mutex
+	indexStatus      model.SearchIndexStatus
+	indexFingerprint string
+	indexBuildMu     sync.Mutex
+	indexCtx         context.Context
+	indexCancel      context.CancelFunc
 
 	// Cache for contact
 	contactCache      map[string]*model.Contact
@@ -39,9 +50,10 @@ type Repository struct {
 }
 
 // New 创建一个新的 Repository
-func New(ds datasource.DataSource) (*Repository, error) {
+func New(ds datasource.DataSource, indexPath string) (*Repository, error) {
 	r := &Repository{
 		ds:                 ds,
+		indexPath:          indexPath,
 		contactCache:       make(map[string]*model.Contact),
 		aliasToContact:     make(map[string][]*model.Contact),
 		remarkToContact:    make(map[string][]*model.Contact),
@@ -66,6 +78,10 @@ func New(ds datasource.DataSource) (*Repository, error) {
 
 	ds.SetCallback("contact", r.contactCallback)
 	ds.SetCallback("chatroom", r.chatroomCallback)
+
+	if err := r.initIndex(); err != nil {
+		log.Warn().Err(err).Msg("init bleve index failed")
+	}
 
 	return r, nil
 }
@@ -107,7 +123,23 @@ func (r *Repository) chatroomCallback(event fsnotify.Event) error {
 
 // Close 实现 Repository 接口的 Close 方法
 func (r *Repository) Close() error {
-	return r.ds.Close()
+	if r.indexCancel != nil {
+		r.indexCancel()
+		r.indexCancel = nil
+	}
+
+	var firstErr error
+	if r.index != nil {
+		if err := r.index.Close(); err != nil {
+			firstErr = err
+		}
+		r.index = nil
+	}
+
+	if err := r.ds.Close(); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	return firstErr
 }
 
 // GetAvatar proxies to datasource
