@@ -247,6 +247,12 @@ func (c *Context) SetAutoDecrypt(enabled bool) {
 	c.UpdateConfig()
 }
 
+func (c *Context) SetWeChatInstances(instances []*wechat.Account) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.WeChatInstances = instances
+}
+
 // 更新配置
 func (c *Context) UpdateConfig() {
 

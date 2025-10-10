@@ -384,12 +384,22 @@ func (m *Message) PlainTextContent() string {
 		if voice, ok := m.Contents["voice"]; ok {
 			// 可选时长字段（可能来源于不同表：voicelength/voiceduration/length 秒）
 			var durStr string
-			if d, ok2 := m.Contents["voicelength"]; ok2 { durStr = fmt.Sprint(d) }
-			if d, ok2 := m.Contents["voiceduration"]; ok2 { durStr = fmt.Sprint(d) }
-			if d, ok2 := m.Contents["length"]; ok2 && durStr=="" { durStr = fmt.Sprint(d) }
+			if d, ok2 := m.Contents["voicelength"]; ok2 {
+				durStr = fmt.Sprint(d)
+			}
+			if d, ok2 := m.Contents["voiceduration"]; ok2 {
+				durStr = fmt.Sprint(d)
+			}
+			if d, ok2 := m.Contents["length"]; ok2 && durStr == "" {
+				durStr = fmt.Sprint(d)
+			}
 			if durStr != "" {
 				// 规范成整数秒显示
-				if strings.Contains(durStr, ".") { if f,err:=strconv.ParseFloat(durStr,64); err==nil { durStr = fmt.Sprint(int(f+0.5)) } }
+				if strings.Contains(durStr, ".") {
+					if f, err := strconv.ParseFloat(durStr, 64); err == nil {
+						durStr = fmt.Sprint(int(f + 0.5))
+					}
+				}
 				// >=60s 转换为 XmYYs 形式
 				if secInt, err := strconv.Atoi(durStr); err == nil {
 					if secInt >= 60 {
@@ -423,7 +433,7 @@ func (m *Message) PlainTextContent() string {
 				keylist = append(keylist, path)
 			}
 		}
-	return fmt.Sprintf("![视频](http://%s/video/%s)", host, strings.Join(keylist, ","))
+		return fmt.Sprintf("![视频](http://%s/video/%s)", host, strings.Join(keylist, ","))
 	case MessageTypeAnimation:
 		if m.Contents["cdnurl"] != nil {
 			if cdnURL, ok := m.Contents["cdnurl"].(string); ok {
@@ -444,7 +454,32 @@ func (m *Message) PlainTextContent() string {
 	case MessageTypeShare:
 		switch m.SubType {
 		case MessageSubTypeText:
-			return fmt.Sprintf("[链接|%s](%s)", m.Contents["title"], m.Contents["desc"])
+			title := fmt.Sprint(m.Contents["title"])
+			desc := fmt.Sprint(m.Contents["desc"])
+			url := fmt.Sprint(m.Contents["url"])
+			if title == "<nil>" {
+				title = "链接"
+			}
+			if desc == "<nil>" {
+				desc = ""
+			}
+			if url == "<nil>" {
+				url = ""
+			}
+			if url == "" && strings.HasPrefix(desc, "http") {
+				url = desc
+			}
+			if url != "" {
+				text := fmt.Sprintf("[链接|%s](%s)", title, url)
+				if desc != "" && desc != url {
+					text = text + "\n" + desc
+				}
+				return text
+			}
+			if desc != "" {
+				return fmt.Sprintf("[链接|%s]\n%s", title, desc)
+			}
+			return fmt.Sprintf("[链接|%s]", title)
 		case MessageSubTypeLink, MessageSubTypeLink2:
 			return fmt.Sprintf("[链接|%s](%s)", m.Contents["title"], m.Contents["url"])
 		case MessageSubTypeFile:

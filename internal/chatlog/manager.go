@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/rs/zerolog/log"
 	"github.com/sjzar/chatlog/internal/chatlog/conf"
@@ -17,6 +19,8 @@ import (
 	"github.com/sjzar/chatlog/pkg/util"
 	"github.com/sjzar/chatlog/pkg/util/dat2img"
 )
+
+const initialDecryptPollInterval = 5 * time.Second
 
 // Manager 管理聊天日志应用
 type Manager struct {
@@ -31,6 +35,10 @@ type Manager struct {
 
 	// Terminal UI
 	app *App
+
+	initialDecryptOnce    sync.Once
+	initialDecryptMu      sync.Mutex
+	initialDecryptLastErr string
 }
 
 func New() *Manager {
@@ -51,10 +59,13 @@ func (m *Manager) Run(configPath string) error {
 
 	m.http = http.NewService(m.ctx, m.db)
 
-	m.ctx.WeChatInstances = m.wechat.GetWeChatInstances()
-	if len(m.ctx.WeChatInstances) >= 1 {
-		m.ctx.SwitchCurrent(m.ctx.WeChatInstances[0])
+	instances := m.wechat.GetWeChatInstances()
+	m.ctx.SetWeChatInstances(instances)
+	if len(instances) >= 1 {
+		m.ctx.SwitchCurrent(instances[0])
 	}
+
+	m.startInitialDecryptWatcher()
 
 	if m.ctx.HTTPEnabled {
 		// 启动HTTP服务
@@ -66,6 +77,94 @@ func (m *Manager) Run(configPath string) error {
 	m.app = NewApp(m.ctx, m)
 	m.app.Run() // 阻塞
 	return nil
+}
+
+func (m *Manager) startInitialDecryptWatcher() {
+	m.initialDecryptOnce.Do(func() {
+		go m.initialDecryptLoop()
+	})
+}
+
+func (m *Manager) initialDecryptLoop() {
+	if m.tryInitialDecryptOnce() {
+		return
+	}
+
+	ticker := time.NewTicker(initialDecryptPollInterval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		if m.tryInitialDecryptOnce() {
+			return
+		}
+	}
+}
+
+func (m *Manager) tryInitialDecryptOnce() bool {
+	if m.ctx == nil || m.wechat == nil {
+		return false
+	}
+
+	instances := m.wechat.GetWeChatInstances()
+	if len(instances) == 0 {
+		return false
+	}
+
+	m.ctx.SetWeChatInstances(instances)
+
+	target := m.selectAccountForAutoDecrypt(instances)
+	if target == nil {
+		target = instances[0]
+	}
+
+	if m.ctx.Current == nil || m.ctx.Current.Name != target.Name || m.ctx.Current.PID != target.PID {
+		m.ctx.SwitchCurrent(target)
+	} else {
+		m.ctx.Refresh()
+	}
+
+	if err := m.DecryptDBFiles(); err != nil {
+		m.recordInitialDecryptError(err)
+		return false
+	}
+
+	log.Info().Str("account", target.Name).Msg("自动解密完成")
+	return true
+}
+
+func (m *Manager) selectAccountForAutoDecrypt(instances []*iwechat.Account) *iwechat.Account {
+	if m.ctx.Current != nil {
+		for _, inst := range instances {
+			if inst.Name == m.ctx.Current.Name {
+				return inst
+			}
+		}
+	}
+
+	if m.ctx.Account != "" {
+		for _, inst := range instances {
+			if inst.Name == m.ctx.Account {
+				return inst
+			}
+		}
+	}
+
+	return nil
+}
+
+func (m *Manager) recordInitialDecryptError(err error) {
+	if err == nil {
+		return
+	}
+
+	msg := err.Error()
+	m.initialDecryptMu.Lock()
+	defer m.initialDecryptMu.Unlock()
+	if msg == m.initialDecryptLastErr {
+		return
+	}
+	m.initialDecryptLastErr = msg
+	log.Warn().Err(err).Msg("自动解密失败，将继续重试")
 }
 
 func (m *Manager) Switch(info *iwechat.Account, history string) error {
@@ -250,7 +349,7 @@ func (m *Manager) CommandKey(configPath string, pid int, force bool, showXorKey 
 
 	m.wechat = wechat.NewService(m.ctx)
 
-	m.ctx.WeChatInstances = m.wechat.GetWeChatInstances()
+	m.ctx.SetWeChatInstances(m.wechat.GetWeChatInstances())
 	if len(m.ctx.WeChatInstances) == 0 {
 		return "", fmt.Errorf("wechat process not found")
 	}
