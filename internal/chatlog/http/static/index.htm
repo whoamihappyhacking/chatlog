@@ -174,6 +174,40 @@
 				transform: translateY(0);
 			}
 
+			.voice-entry {
+				display: inline-flex;
+				align-items: center;
+				gap: 6px;
+				margin: 4px 0;
+				flex-wrap: wrap;
+			}
+
+			.voice-transcribe-btn {
+				padding: 2px 8px;
+				font-size: 12px;
+				border: 1px solid #888;
+				border-radius: 6px;
+				background-color: #f0f0f0;
+				color: #222;
+				cursor: pointer;
+				transition: opacity 0.2s ease;
+			}
+
+			.voice-transcribe-btn--busy,
+			.voice-transcribe-btn:disabled {
+				opacity: 0.6;
+				cursor: wait;
+			}
+
+			.voice-transcribe-result {
+				font-size: 12px;
+				color: #444;
+				min-height: 1em;
+				max-width: 520px;
+				white-space: pre-wrap;
+				word-break: break-word;
+			}
+
 			.result-container {
 				margin-top: 20px;
 				border: 1px solid var(--border-color);
@@ -1300,6 +1334,108 @@
 					diaryDateInput.value = todayStr;
 				}
 			}
+
+			(function () {
+				if (window.__chatlogVoiceHandler) {
+					return;
+				}
+				window.__chatlogVoiceHandler = true;
+				document.addEventListener("click", async function (event) {
+					const button = event.target.closest(
+						".voice-transcribe-btn"
+					);
+					if (!button) {
+						return;
+					}
+					const container = button.closest(".voice-entry");
+					const link = container
+						? container.querySelector("a.voice-link")
+						: null;
+					const result = container
+						? container.querySelector(".voice-transcribe-result")
+						: null;
+					if (!link) {
+						return;
+					}
+					event.preventDefault();
+					const href = link.getAttribute("href");
+					if (!href) {
+						return;
+					}
+					let url;
+					try {
+						url = new URL(href, window.location.origin);
+					} catch (err) {
+						if (result) {
+							result.textContent = "链接无效";
+							result.dataset.status = "error";
+						}
+						console.error("voice transcription url error", err);
+						return;
+					}
+					url.searchParams.set("transcribe", "1");
+					const previous = result ? result.textContent : "";
+					if (result) {
+						result.textContent = "转写中...";
+						result.dataset.status = "loading";
+					}
+					button.disabled = true;
+					button.classList.add("voice-transcribe-btn--busy");
+					try {
+						const response = await fetch(url.toString(), {
+							headers: { Accept: "application/json" },
+						});
+						if (!response.ok) {
+							throw new Error(`HTTP ${response.status}`);
+						}
+						let data = null;
+						const contentType =
+							response.headers.get("content-type");
+						if (
+							contentType &&
+							contentType.indexOf("application/json") >= 0
+						) {
+							data = await response.json();
+						}
+						const text =
+							data && typeof data.text === "string"
+								? data.text.trim()
+								: "";
+						if (result) {
+							if (text) {
+								result.textContent = text;
+								result.dataset.status = "done";
+							} else {
+								result.textContent = "未识别到语音内容";
+								result.dataset.status = "empty";
+							}
+							if (data && data.language) {
+								result.dataset.language = data.language;
+							}
+							if (
+								data &&
+								data.duration !== undefined &&
+								data.duration !== null
+							) {
+								result.dataset.duration = String(data.duration);
+							}
+						}
+					} catch (err) {
+						if (result) {
+							result.textContent = "转写失败";
+							result.dataset.status = "error";
+						}
+						console.error("voice transcription failed", err);
+					} finally {
+						button.disabled = false;
+						button.classList.remove("voice-transcribe-btn--busy");
+						if (result && result.dataset.status === "loading") {
+							result.textContent = previous;
+							delete result.dataset.status;
+						}
+					}
+				});
+			})();
 
 			// 复制结果功能
 			document

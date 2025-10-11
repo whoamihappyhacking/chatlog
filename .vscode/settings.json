@@ -53,7 +53,7 @@
 	},
 	"go.toolsEnvVars": {
 		"CGO_ENABLED": "1",
-		"CGO_CFLAGS": "-I${workspaceFolder}/third_party/whisper/include",
-		"CGO_LDFLAGS": "-L${workspaceFolder}/third_party/whisper/lib"
+		"CGO_CFLAGS": "-I${workspaceFolder}/third_party/include",
+		"CGO_LDFLAGS": "-L${workspaceFolder}/third_party/lib"
 	}
 }

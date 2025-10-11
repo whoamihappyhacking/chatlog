@@ -5,7 +5,11 @@ ifeq ($(VERSION),)
 endif
 LDFLAGS := -ldflags '-X "github.com/sjzar/chatlog/pkg/version.Version=$(VERSION)" -w -s'
 TAG := --tags "fts5"
-CGO_FLAG := CGO_ENABLED=1 CGO_CFLAGS="-I./third_party/whisper/include" CGO_LDFLAGS="-L./third_party/whisper/lib"
+CGO_EXTRA_LDFLAGS :=
+ifeq ($(OS),Windows_NT)
+	CGO_EXTRA_LDFLAGS := -lgomp
+endif
+CGO_FLAG := CGO_ENABLED=1 CGO_CFLAGS="-I$(abspath $(CURDIR)/third_party/include)" CGO_LDFLAGS="-L$(abspath $(CURDIR)/third_party/lib) $(CGO_EXTRA_LDFLAGS)"
 
 PLATFORMS := \
     darwin/amd64 \
@@ -45,11 +49,11 @@ lint:
 
 tidy:
 	@echo "Tidying up dependencies..."
-	$(GO) mod tidy
+	@$(CGO_FLAG) $(GO) mod tidy
 
 test:
 	@echo "Running tests..."
-	$(GO) test ./... -cover
+	@$(CGO_FLAG) $(GO) test ./... -cover
 
 build:
 	@echo "Building for current platform..."

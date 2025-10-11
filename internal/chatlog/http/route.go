@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"embed"
 	"encoding/csv"
 	"encoding/json"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rs/zerolog/log"
 
 	"github.com/sjzar/chatlog/internal/errors"
 	"github.com/sjzar/chatlog/internal/model"
@@ -29,10 +31,102 @@ import (
 var EFS embed.FS
 
 // 统一的 HTML 预览组件片段
-var previewHTMLSnippet = `
+var previewHTMLSnippetBase = `
 <style>#preview{position:fixed;top:60px;left:40px;z-index:9999;display:none;background:#1f2329;border:1px solid #444;padding:4px 4px 8px;border-radius:8px;max-width:720px;max-height:520px;box-shadow:0 4px 16px rgba(0,0,0,0.45);color:#eee;font-size:12px;resize:both;overflow:hidden;}#preview.dragging{opacity:.85;cursor:grabbing;}#preview .pv-header{display:flex;align-items:center;justify-content:space-between;gap:6px;margin:0 2px 4px 2px;font-size:12px;user-select:none;cursor:grab;}#preview .pv-header .title{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#9ecbff;font-weight:600;}#preview button{background:#2d333b;border:1px solid #555;color:#ddd;font-size:11px;padding:2px 6px;border-radius:4px;cursor:pointer;}#preview button:hover{background:#3a424b}#preview-content{max-width:100%;max-height:470px;overflow:auto;}#preview-content img,#preview-content video{max-width:100%;max-height:470px;display:block;border-radius:4px;}#preview-content audio{width:100%;margin-top:4px;}#preview-content .audio-meta{margin-top:4px;color:#bbb;font-size:11px;font-family:monospace;}</style>
 <div id="preview"><div class="pv-header"><span class="title" id="pv-title">预览</span><button id="pv-pin" title="固定/取消固定">📌</button><button id="pv-close" title="关闭">✕</button></div><div id="preview-content"></div></div>
 <script>(function(){const pv=document.getElementById('preview');const pvc=document.getElementById('preview-content');const titleEl=document.getElementById('pv-title');const pinBtn=document.getElementById('pv-pin');const closeBtn=document.getElementById('pv-close');let activeLink=null;let hideTimer=null;let pinned=false;let dragState=null;let currentType='';function esc(s){return s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));}function build(href,text){let label=text||'';label=label.replace(/^[\[]|[\]]$/g,'');currentType='text';if(/\/image\//.test(href)){currentType='image';return '<img src="'+href+'" loading="lazy" />';}if(/\/video\//.test(href)){currentType='video';return '<video src="'+href+'" controls preload="metadata"></video>'; }if(/\/voice\//.test(href)){currentType='audio';return '<div class="audio-box"><audio src="'+href+'" controls preload="metadata"></audio><div class="audio-meta">解析中...</div></div>'; }if(/表情/.test(label)||/\.(gif|apng|webp)(\?|$)/i.test(href)){currentType='emoji';return '<img src="'+href+'" style="max-width:100%;max-height:470px;display:block;" />';}if(/\/file\//.test(href)){currentType='file';return '<div style="word-break:break-all;line-height:1.5;">文件: '+esc(label)+'<br/><a href="'+href+'" target="_blank" style="color:#61afef;">下载</a></div>'; }return '<div style="word-break:break-all;line-height:1.5;">'+esc(label)+'<br/><a href="'+href+'" target="_blank" style="color:#61afef;">打开</a></div>'; }function fmtDur(d){if(!isFinite(d)||d<=0)return '未知';const s=Math.round(d);if(s>=60){const m=Math.floor(s/60);const ss=s%60;return m+'m'+(ss<10?'0':'')+ss+'s';}return s+'s';}function parseLabelDuration(lbl){const m1=/语音\((\d+)s\)/.exec(lbl);if(m1)return m1[1]+'s';const m2=/语音\((\d+)m(\d{1,2})s\)/.exec(lbl);if(m2){const mm=m2[1],ss=m2[2];return mm+'m'+(ss.length===1?'0'+ss:ss)+'s';}return null;}function afterRender(){if(currentType==='audio'){const audio=pvc.querySelector('audio');const meta=pvc.querySelector('.audio-meta');if(audio&&meta){const label=(activeLink?activeLink.textContent:'').replace(/[\[\]]/g,'');const parsed=parseLabelDuration(label);if(parsed){meta.textContent='时长: '+parsed;}const update=()=>{if(isFinite(audio.duration)&&audio.duration>0){meta.textContent='时长: '+fmtDur(audio.duration);return true;}return false;};audio.addEventListener('loadedmetadata',()=>{update();},{once:true});let tries=0;const timer=setInterval(()=>{if(update()||++tries>6){clearInterval(timer);} },500);audio.load();}}}function adjustWidth(){if(dragState)return;const vw=window.innerWidth;const clamp=w=>Math.min(w,vw-40);switch(currentType){case'audio':pv.style.width=clamp(680)+'px';break;case'video':pv.style.width=clamp(720)+'px';break;case'file':pv.style.width=clamp(560)+'px';break;case'image':case'emoji':pv.style.width='auto';break;default:pv.style.width='420px';}}function showFor(a){clearTimeout(hideTimer);activeLink=a;const href=a.getAttribute('href');pvc.innerHTML=build(href,a.textContent||'');titleEl.textContent=a.textContent||'预览';pv.style.display='block';adjustWidth();afterRender();positionNear(a);}function positionNear(a){if(pinned||dragState)return;const rect=a.getBoundingClientRect();const pw=pv.offsetWidth;const ph=pv.offsetHeight;let x=rect.right+12;let y=rect.top;const vw=window.innerWidth;const vh=window.innerHeight;if(x+pw>vw-8)x=rect.left-pw-12;if(x<8)x=8;if(y+ph>vh-8)y=vh-ph-8;if(y<8)y=8;pv.style.left=x+'px';pv.style.top=y+'px';}function scheduleHide(){if(pinned)return;hideTimer=setTimeout(()=>{if(pinned)return;activeLink=null;pv.style.display='none';pvc.innerHTML='';},280);}document.addEventListener('mouseover',e=>{const a=e.target.closest('a.media');if(!a)return;if(a===activeLink){clearTimeout(hideTimer);return;}showFor(a);});document.addEventListener('mousemove',e=>{if(!activeLink||pinned||dragState)return;positionNear(activeLink);});pv.addEventListener('mouseenter',()=>{clearTimeout(hideTimer);});pv.addEventListener('mouseleave',()=>{scheduleHide();});document.addEventListener('mouseout',e=>{const a=e.target.closest&&e.target.closest('a.media');if(!a)return;if(pv.contains(e.relatedTarget))return;scheduleHide();});pinBtn.addEventListener('click',()=>{pinned=!pinned;pinBtn.style.opacity=pinned?1:0.6;if(!pinned){scheduleHide();}else{clearTimeout(hideTimer);}});closeBtn.addEventListener('click',()=>{pinned=false;activeLink=null;pv.style.display='none';pvc.innerHTML='';});pv.querySelector('.pv-header').addEventListener('mousedown',e=>{if(e.target===pinBtn||e.target===closeBtn)return;pinned=true;pinBtn.style.opacity=1;dragState={ox:e.clientX,oy:e.clientY,left:pv.offsetLeft,top:pv.offsetTop};pv.classList.add('dragging');e.preventDefault();});window.addEventListener('mousemove',e=>{if(!dragState)return;const dx=e.clientX-dragState.ox;const dy=e.clientY-dragState.oy;let nl=dragState.left+dx;let nt=dragState.top+dy;const vw=window.innerWidth;const vh=window.innerHeight;nl=Math.max(0,Math.min(vw-pv.offsetWidth,nl));nt=Math.max(0,Math.min(vh-pv.offsetHeight,nt));pv.style.left=nl+'px';pv.style.top=nt+'px';});window.addEventListener('mouseup',()=>{if(dragState){dragState=null;pv.classList.remove('dragging');}});window.addEventListener('keydown',e=>{if(e.key==='Escape'){pinned=false;pv.style.display='none';pvc.innerHTML='';activeLink=null;}});})();</script>`
+
+var previewVoiceSnippet = `
+<style>
+.voice-entry{display:inline-flex;align-items:center;gap:6px;margin:4px 0;flex-wrap:wrap;}
+.voice-transcribe-btn{padding:2px 8px;font-size:12px;border:1px solid #888;background:#f0f0f0;color:#222;border-radius:6px;cursor:pointer;transition:opacity .2s ease;}
+.voice-transcribe-btn--busy,
+.voice-transcribe-btn:disabled{opacity:0.6;cursor:wait;}
+.voice-transcribe-result{font-size:12px;color:#444;min-height:1em;max-width:520px;white-space:pre-wrap;word-break:break-word;}
+</style>
+<script>
+(function(){
+	if(window.__chatlogVoiceHandler){return;}
+	window.__chatlogVoiceHandler = true;
+
+	document.addEventListener('click', async function(ev){
+		const btn = ev.target.closest('.voice-transcribe-btn');
+		if(!btn){return;}
+		ev.preventDefault();
+
+		const container = btn.closest('.voice-entry');
+		const link = container ? container.querySelector('a.voice-link') : null;
+		const result = container ? container.querySelector('.voice-transcribe-result') : null;
+		if(!link){return;}
+
+		const href = link.getAttribute('href');
+		if(!href){return;}
+
+		let url;
+		try{
+			url = new URL(href, window.location.origin);
+		}catch(err){
+			if(result){
+				result.textContent = '链接无效';
+				result.dataset.status = 'error';
+			}
+			return;
+		}
+
+		url.searchParams.set('transcribe', '1');
+
+		const previous = result ? result.textContent : '';
+		if(result){
+			result.textContent = '转写中...';
+			result.dataset.status = 'loading';
+		}
+
+		btn.disabled = true;
+		btn.classList.add('voice-transcribe-btn--busy');
+
+		try{
+			const resp = await fetch(url.toString(), { headers: { 'Accept': 'application/json' } });
+			if(!resp.ok){
+				throw new Error('HTTP ' + resp.status);
+			}
+
+			let data = null;
+			const ct = resp.headers.get('content-type') || '';
+			if(ct.indexOf('application/json') >= 0){
+				data = await resp.json();
+			}
+
+			const text = data && typeof data.text === 'string' ? data.text.trim() : '';
+			if(result){
+				if(text){
+					result.textContent = text;
+					result.dataset.status = 'done';
+				}else{
+					result.textContent = '未识别到语音内容';
+					result.dataset.status = 'empty';
+				}
+				if(data && data.language){ result.dataset.language = data.language; }
+				if(data && data.duration !== undefined){ result.dataset.duration = String(data.duration); }
+			}
+		}catch(err){
+			if(result){
+				result.textContent = '转写失败';
+				result.dataset.status = 'error';
+			}
+			console.error('voice transcription failed', err);
+		}finally{
+			btn.disabled = false;
+			btn.classList.remove('voice-transcribe-btn--busy');
+			if(result && result.dataset.status === 'loading'){
+				result.textContent = previous;
+				result.dataset.status = '';
+			}
+		}
+	});
+})();
+</script>`
+
+var previewHTMLSnippet = previewHTMLSnippetBase + previewVoiceSnippet
 
 func (s *Service) initRouter() {
 	s.initBaseRouter()
@@ -1549,6 +1643,10 @@ func (s *Service) handleMedia(c *gin.Context, _type string) {
 			c.JSON(http.StatusOK, media)
 			return
 		}
+		if media.Type == "voice" && c.Query("transcribe") != "" {
+			s.handleVoiceTranscription(c, k, media)
+			return
+		}
 		switch media.Type {
 		case "voice":
 			s.HandleVoice(c, media.Data)
@@ -1563,6 +1661,69 @@ func (s *Service) handleMedia(c *gin.Context, _type string) {
 		errors.Err(c, _err)
 		return
 	}
+}
+
+func (s *Service) handleVoiceTranscription(c *gin.Context, key string, media *model.Media) {
+	if s.speechTranscriber == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "speech transcription not enabled"})
+		return
+	}
+
+	if len(media.Data) == 0 {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "voice data unavailable"})
+		return
+	}
+
+	ctx := c.Request.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var cancel context.CancelFunc
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		ctx, cancel = context.WithTimeout(ctx, 2*time.Minute)
+	}
+	if cancel != nil {
+		defer cancel()
+	}
+
+	opts := s.speechOptions
+	if lang := strings.TrimSpace(c.Query("lang")); lang != "" {
+		opts.Language = lang
+		opts.LanguageSet = true
+	}
+	if translate := strings.TrimSpace(c.Query("translate")); translate != "" {
+		switch strings.ToLower(translate) {
+		case "1", "true", "yes", "on":
+			opts.Translate = true
+			opts.TranslateSet = true
+		case "0", "false", "no", "off":
+			opts.Translate = false
+			opts.TranslateSet = true
+		}
+	}
+
+	res, err := s.speechTranscriber.TranscribeSilk(ctx, media.Data, opts)
+	if err != nil {
+		if ctx.Err() != nil {
+			c.JSON(http.StatusRequestTimeout, gin.H{"error": "transcription cancelled"})
+			return
+		}
+		log.Error().Err(err).Str("media_key", key).Msg("voice transcription failed")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "transcription failed"})
+		return
+	}
+	if res == nil {
+		c.JSON(http.StatusOK, gin.H{"key": key, "text": "", "language": opts.Language, "duration": 0})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"key":      key,
+		"text":     res.Text,
+		"language": res.Language,
+		"duration": res.Duration.Seconds(),
+		"segments": res.Segments,
+	})
 }
 
 func (s *Service) findPath(_type string, key string) (string, error) {
@@ -1674,6 +1835,9 @@ func messageHTMLPlaceholder(m *model.Message) string {
 		if left == "动画表情" || left == "GIF表情" || strings.Contains(left, "表情") {
 			className = "media anim"
 		}
+		if left == "语音" {
+			className = "media voice-link"
+		}
 		var anchorText string
 		if left == "链接" { // 保留完整形式 [链接|标题\n更多说明]
 			escapedFull := template.HTMLEscapeString(fullLabel)
@@ -1685,7 +1849,12 @@ func messageHTMLPlaceholder(m *model.Message) string {
 		} else {
 			anchorText = "[" + template.HTMLEscapeString(left) + "]"
 		}
-		return `<a class="` + className + `" href="` + template.HTMLEscapeString(url) + `" target="_blank">` + anchorText + `</a>`
+		escapedURL := template.HTMLEscapeString(url)
+		anchor := `<a class="` + className + `" href="` + escapedURL + `" target="_blank">` + anchorText + `</a>`
+		if left == "语音" {
+			return `<span class="voice-entry">` + anchor + `<button type="button" class="voice-transcribe-btn">转文字</button><span class="voice-transcribe-result" aria-live="polite"></span></span>`
+		}
+		return anchor
 	})
 }
 

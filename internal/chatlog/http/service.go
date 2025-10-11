@@ -3,14 +3,18 @@ package http
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/rs/zerolog/log"
 
+	"github.com/sjzar/chatlog/internal/chatlog/conf"
 	"github.com/sjzar/chatlog/internal/chatlog/database"
 	"github.com/sjzar/chatlog/internal/errors"
+	"github.com/sjzar/chatlog/internal/speech"
+	"github.com/sjzar/chatlog/internal/speech/whispercpp"
 )
 
 type Service struct {
@@ -23,11 +27,15 @@ type Service struct {
 	mcpServer           *server.MCPServer
 	mcpSSEServer        *server.SSEServer
 	mcpStreamableServer *server.StreamableHTTPServer
+
+	speechTranscriber speech.Transcriber
+	speechOptions     speech.Options
 }
 
 type Config interface {
 	GetHTTPAddr() string
 	GetDataDir() string
+	GetSpeech() *conf.SpeechConfig
 }
 
 func NewService(conf Config, db *database.Service) *Service {
@@ -55,7 +63,35 @@ func NewService(conf Config, db *database.Service) *Service {
 
 	s.initMCPServer()
 	s.initRouter()
+	s.initSpeech(conf)
 	return s
+}
+
+func (s *Service) initSpeech(cfg Config) {
+	speechCfg := cfg.GetSpeech()
+	if speechCfg == nil || !speechCfg.Enabled {
+		return
+	}
+
+	modelPath := strings.TrimSpace(speechCfg.Model)
+	if modelPath == "" {
+		log.Warn().Msg("speech transcription enabled but model path is empty")
+		return
+	}
+
+	opts := speechCfg.ToOptions()
+	transcriber, err := whispercpp.New(whispercpp.Config{
+		ModelPath:      modelPath,
+		DefaultOptions: opts,
+	})
+	if err != nil {
+		log.Err(err).Msg("initialise speech transcriber failed")
+		return
+	}
+
+	s.speechTranscriber = transcriber
+	s.speechOptions = opts
+	log.Info().Msg("speech transcription backend initialised")
 }
 
 func (s *Service) Start() error {
@@ -101,6 +137,11 @@ func (s *Service) Stop() error {
 	if err := s.server.Shutdown(ctx); err != nil {
 		log.Debug().Err(err).Msg("Failed to shutdown HTTP server")
 		return nil
+	}
+
+	if s.speechTranscriber != nil {
+		s.speechTranscriber.Close()
+		s.speechTranscriber = nil
 	}
 
 	log.Info().Msg("HTTP server stopped")
