@@ -906,7 +906,9 @@ func (s *Service) handleSearch(c *gin.Context) {
 	resp.Offset = offset
 
 	format := strings.ToLower(strings.TrimSpace(params.Format))
-	terms := extractQueryTerms(resp.Query)
+	if format == "" {
+		format = "json"
+	}
 
 	switch format {
 	case "html":
@@ -966,9 +968,9 @@ func (s *Service) handleSearch(c *gin.Context) {
 				c.Writer.WriteString("</div>")
 				c.Writer.WriteString("<div class=\"meta-row\"><span>时间：" + template.HTMLEscapeString(msg.Time.Format("2006-01-02 15:04:05")) + "</span><span>发送者：" + template.HTMLEscapeString(senderDisplay) + "</span></div>")
 				if snippet := strings.TrimSpace(hit.Snippet); snippet != "" {
-					h := highlightPlainTextToHTML(snippet, terms)
-					h = strings.ReplaceAll(h, "\n", "<br/>")
-					c.Writer.WriteString("<div class=\"snippet\">" + h + "</div>")
+					escaped := template.HTMLEscapeString(snippet)
+					escaped = strings.ReplaceAll(escaped, "\n", "<br/>")
+					c.Writer.WriteString("<div class=\"snippet\">" + escaped + "</div>")
 				}
 				c.Writer.WriteString("<div class=\"msg-content\"><pre>" + messageHTMLPlaceholder(msg) + "</pre></div>")
 				c.Writer.WriteString("</div>")
@@ -1055,7 +1057,7 @@ func (s *Service) handleSearch(c *gin.Context) {
 		}
 		csvWriter.Flush()
 		return
-	case "json", "":
+	case "json":
 		c.JSON(http.StatusOK, resp)
 		return
 	default:
@@ -1091,6 +1093,11 @@ func (s *Service) handleChatlog(c *gin.Context) {
 		q.Offset = 0
 	}
 
+	format := strings.ToLower(strings.TrimSpace(q.Format))
+	if format == "" {
+		format = "json"
+	}
+
 	// 1. 未指定 talker: 分组输出
 	if q.Talker == "" {
 		sessionsResp, err := s.db.GetSessions("", 0, 0)
@@ -1111,7 +1118,7 @@ func (s *Service) handleChatlog(c *gin.Context) {
 			}
 			groups = append(groups, &grouped{Talker: sess.UserName, TalkerName: sess.NickName, Messages: msgs})
 		}
-		switch strings.ToLower(q.Format) {
+		switch format {
 		case "html":
 			c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
 			c.Writer.WriteString("<html><head><meta charset=\"utf-8\"><title>Chatlog</title><style>body{font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.4;}details{margin:8px 0;padding:4px 8px;border:1px solid #ddd;border-radius:4px; background:#fafafa;}summary{cursor:pointer;font-weight:600;} .msg{margin:4px 0;padding:4px 6px;border-left:3px solid #3498db;background:#fff;} .msg-row{display:flex;gap:8px;align-items:flex-start;} .avatar{width:28px;height:28px;border-radius:6px;object-fit:cover;background:#f2f2f2;border:1px solid #eee;flex:0 0 28px} .msg-content{flex:1;min-width:0} .meta{color:#666;font-size:12px;} pre{white-space:pre-wrap;word-break:break-word;margin:2px 0;} .talker{color:#2c3e50;} .sender{color:#8e44ad;} .time{color:#16a085;} .content{margin-left:4px;} a.media{color:#2c3e50;text-decoration:none;} a.media:hover{text-decoration:underline;}</style></head><body>")
@@ -1156,7 +1163,7 @@ func (s *Service) handleChatlog(c *gin.Context) {
 				}
 			}
 			csvWriter.Flush()
-		default:
+		case "text", "plain":
 			c.Writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			c.Writer.Header().Set("Cache-Control", "no-cache")
 			c.Writer.Header().Set("Connection", "keep-alive")
@@ -1179,6 +1186,8 @@ func (s *Service) handleChatlog(c *gin.Context) {
 				}
 				c.Writer.WriteString("-----------------------------\n")
 			}
+		default:
+			c.JSON(http.StatusOK, groups)
 		}
 		return
 	}
@@ -1189,7 +1198,7 @@ func (s *Service) handleChatlog(c *gin.Context) {
 		errors.Err(c, err)
 		return
 	}
-	switch strings.ToLower(q.Format) {
+	switch format {
 	case "html":
 		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
 		c.Writer.WriteString("<html><head><meta charset=\"utf-8\"><title>Chatlog</title><style>body{font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.4;} .msg{margin:8px 0;padding:6px 8px;border-left:3px solid #3498db;background:#fafafa;} .msg-row{display:flex;gap:8px;align-items:flex-start;} .avatar{width:28px;height:28px;border-radius:6px;object-fit:cover;background:#f2f2f2;border:1px solid #eee;flex:0 0 28px} .msg-content{flex:1;min-width:0} .meta{color:#666;font-size:12px;margin-bottom:2px;} pre{white-space:pre-wrap;word-break:break-word;margin:0;} .sender{color:#8e44ad;} .time{color:#16a085;margin-left:6px;} a.media{color:#2c3e50;text-decoration:none;} a.media:hover{text-decoration:underline;}</style></head><body>")
@@ -1260,7 +1269,10 @@ func (s *Service) handleContacts(c *gin.Context) {
 		return
 	}
 
-	format := strings.ToLower(q.Format)
+	format := strings.ToLower(strings.TrimSpace(q.Format))
+	if format == "" {
+		format = "json"
+	}
 	switch format {
 	case "html":
 		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1375,7 +1387,10 @@ func (s *Service) handleChatRooms(c *gin.Context) {
 		errors.Err(c, err)
 		return
 	}
-	format := strings.ToLower(q.Format)
+	format := strings.ToLower(strings.TrimSpace(q.Format))
+	if format == "" {
+		format = "json"
+	}
 	switch format {
 	case "json":
 		// json
@@ -1419,7 +1434,10 @@ func (s *Service) handleSessions(c *gin.Context) {
 		errors.Err(c, err)
 		return
 	}
-	format := strings.ToLower(q.Format)
+	format := strings.ToLower(strings.TrimSpace(q.Format))
+	if format == "" {
+		format = "json"
+	}
 	switch format {
 	case "html":
 		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1537,7 +1555,10 @@ func (s *Service) handleDiary(c *gin.Context) {
 		groups = append(groups, &grouped{Talker: sess.UserName, TalkerName: sess.NickName, Messages: msgs})
 	}
 
-	format := strings.ToLower(q.Format)
+	format := strings.ToLower(strings.TrimSpace(q.Format))
+	if format == "" {
+		format = "json"
+	}
 	switch format {
 	case "html":
 		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1812,8 +1833,7 @@ func (s *Service) HandleVoice(c *gin.Context, data []byte) {
 
 // 统一占位符：将 PlainTextContent 里形如 ![标签](url) 或 [标签](url) 的模式转成超链接形式，仅显示 [标签]。
 var (
-	placeholderPattern     = regexp.MustCompile(`!?\[([^\]]+)\]\((https?://[^)]+)\)`)
-	searchTermSplitPattern = regexp.MustCompile(`[\s,，；;、]+`)
+	placeholderPattern = regexp.MustCompile(`!?\[([^\]]+)\]\((https?://[^)]+)\)`)
 )
 
 func messageHTMLPlaceholder(m *model.Message) string {
@@ -1856,78 +1876,4 @@ func messageHTMLPlaceholder(m *model.Message) string {
 		}
 		return anchor
 	})
-}
-
-func extractQueryTerms(raw string) []string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil
-	}
-	parts := searchTermSplitPattern.Split(raw, -1)
-	terms := make([]string, 0, len(parts))
-	seen := make(map[string]struct{})
-	for _, part := range parts {
-		term := strings.Trim(part, "\"'()[]{}")
-		if term == "" {
-			continue
-		}
-		switch strings.ToUpper(term) {
-		case "AND", "OR", "NOT":
-			continue
-		}
-		key := strings.ToLower(term)
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		terms = append(terms, term)
-	}
-	return terms
-}
-
-func highlightPlainTextToHTML(text string, terms []string) string {
-	if text == "" {
-		return ""
-	}
-	if len(terms) == 0 {
-		return template.HTMLEscapeString(text)
-	}
-	unique := make(map[string]struct{})
-	escaped := make([]string, 0, len(terms))
-	for _, term := range terms {
-		trimmed := strings.TrimSpace(term)
-		if trimmed == "" {
-			continue
-		}
-		key := strings.ToLower(trimmed)
-		if _, ok := unique[key]; ok {
-			continue
-		}
-		unique[key] = struct{}{}
-		escaped = append(escaped, regexp.QuoteMeta(trimmed))
-	}
-	if len(escaped) == 0 {
-		return template.HTMLEscapeString(text)
-	}
-	sort.Slice(escaped, func(i, j int) bool { return len(escaped[i]) > len(escaped[j]) })
-	pattern := strings.Join(escaped, "|")
-	re, err := regexp.Compile("(?i)" + pattern)
-	if err != nil {
-		return template.HTMLEscapeString(text)
-	}
-	matches := re.FindAllStringIndex(text, -1)
-	if len(matches) == 0 {
-		return template.HTMLEscapeString(text)
-	}
-	var builder strings.Builder
-	last := 0
-	for _, loc := range matches {
-		builder.WriteString(template.HTMLEscapeString(text[last:loc[0]]))
-		builder.WriteString(`<mark class="search-highlight">`)
-		builder.WriteString(template.HTMLEscapeString(text[loc[0]:loc[1]]))
-		builder.WriteString("</mark>")
-		last = loc[1]
-	}
-	builder.WriteString(template.HTMLEscapeString(text[last:]))
-	return builder.String()
 }

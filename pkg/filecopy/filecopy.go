@@ -57,6 +57,7 @@ type FileCopyManager struct {
 	cancel       context.CancelFunc // Cancel function for graceful shutdown
 	wg           sync.WaitGroup     // WaitGroup for goroutine synchronization
 	cacheSize    int64              // Current number of cached entries (atomic)
+	copyLocks    sync.Map           // Per-cacheKey mutexes to avoid duplicate copies
 }
 
 // FileIndexEntry represents an indexed temporary file with comprehensive metadata.
@@ -608,30 +609,28 @@ func (fm *FileCopyManager) GetTempCopy(originalPath string) (string, error) {
 		expectedDataHash = fmt.Sprintf("%x", currentSize+currentModTime.UnixNano())[:16]
 	}
 
-	// Strategy 1: Check index for existing file using unified cache key
 	baseName := fm.extractBaseName(originalPath)
 	ext := extractFileExtension(originalPath)
 
 	// Use unified cache key generation
 	cacheKey := fm.generateCacheKey(fm.instanceID, baseName, ext, currentHash, expectedDataHash)
 
+	lock := fm.acquireCopyLock(cacheKey)
+	lock.Lock()
+	defer lock.Unlock()
+
 	var oldTempPath string // Track old file to delete after successful creation
 	if value, exists := fm.fileIndex.Load(cacheKey); exists {
 		entry := value.(*FileIndexEntry)
-		// Found cached file, verify it still exists and matches
 		if _, err := os.Stat(entry.TempPath); err == nil && currentSize == entry.Size {
-			// File exists and size matches, reuse cached copy
-			entry.SetLastAccess(now)            // Update access time atomically
-			entry.SetOriginalPath(originalPath) // Update original path thread-safely
+			entry.SetLastAccess(now)
+			entry.SetOriginalPath(originalPath)
 			return entry.TempPath, nil
-		} else {
-			// Cached file is missing or size mismatch, remove from index
-			fm.fileIndex.Delete(cacheKey)
-			atomic.AddInt64(&fm.cacheSize, -1)
-			if err == nil {
-				// File exists but size mismatch, mark for cleanup
-				oldTempPath = entry.TempPath
-			}
+		}
+		fm.fileIndex.Delete(cacheKey)
+		atomic.AddInt64(&fm.cacheSize, -1)
+		if err == nil {
+			oldTempPath = entry.TempPath
 		}
 	}
 
@@ -675,6 +674,11 @@ func (fm *FileCopyManager) GetTempCopy(originalPath string) (string, error) {
 	}
 
 	return tempPath, nil
+}
+
+func (fm *FileCopyManager) acquireCopyLock(cacheKey string) *sync.Mutex {
+	lockIface, _ := fm.copyLocks.LoadOrStore(cacheKey, &sync.Mutex{})
+	return lockIface.(*sync.Mutex)
 }
 
 // generateTempPath creates a unique temporary file path using a structured naming convention.
