@@ -15,7 +15,10 @@ import (
 	"github.com/sjzar/chatlog/pkg/util/zstd"
 )
 
-const decodedSampleRate = 24000
+const (
+	decodedSampleRate   = 24000
+	minSilkHeaderLength = 9
+)
 
 // Silk2PCM16 解码 Silk 数据，返回 16-bit PCM 采样数据及采样率。
 func Silk2PCM16(data []byte) ([]int16, int, error) {
@@ -39,10 +42,15 @@ func Silk2PCM16(data []byte) ([]int16, int, error) {
 }
 
 func decodeSilk(data []byte) ([]int16, int, error) {
+	payload, err := prepareSilkPayload(data)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	sd := silk.SilkInit()
 	defer sd.Close()
 
-	pcmBytes := sd.Decode(data)
+	pcmBytes := sd.Decode(payload)
 	if len(pcmBytes) == 0 {
 		return nil, 0, fmt.Errorf("silk decode failed")
 	}
@@ -62,6 +70,17 @@ var (
 	silkMagic = []byte("#!SILK")
 	zstdMagic = []byte{0x28, 0xb5, 0x2f, 0xfd}
 )
+
+func prepareSilkPayload(data []byte) ([]byte, error) {
+	trimmed := bytes.TrimLeft(data, "\x00\xff")
+	if len(trimmed) < minSilkHeaderLength {
+		return nil, fmt.Errorf("silk payload too short: %d bytes", len(trimmed))
+	}
+	if !bytes.HasPrefix(trimmed, silkMagic) {
+		return nil, fmt.Errorf("silk header missing")
+	}
+	return trimmed, nil
+}
 
 func normalizeSilkPayload(data []byte) []byte {
 	current := data

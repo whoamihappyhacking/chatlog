@@ -1,7 +1,7 @@
 package chatlog
 
 import (
-	"io"
+	stdlog "log"
 	"os"
 	"path/filepath"
 	"time"
@@ -24,22 +24,23 @@ func initLog(cmd *cobra.Command, args []string) {
 	}
 
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339})
+	stdlog.SetOutput(os.Stderr)
 }
 
 func initTuiLog(cmd *cobra.Command, args []string) {
-	logOutput := io.Discard
+	logpath := util.DefaultWorkDir("")
+	util.PrepareDir(logpath)
 
-	debug, _ := cmd.Flags().GetBool("debug")
-	if debug {
-		logpath := util.DefaultWorkDir("")
-		util.PrepareDir(logpath)
-		logFD, err := os.OpenFile(filepath.Join(logpath, "chatlog.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, os.ModePerm)
-		if err != nil {
-			panic(err)
-		}
-		logOutput = logFD
+	logFile, err := os.OpenFile(filepath.Join(logpath, "chatlog.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, os.ModePerm)
+	if err != nil {
+		panic(err)
 	}
 
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: logOutput, NoColor: true, TimeFormat: time.RFC3339})
-	logrus.SetOutput(logOutput)
+	log.Logger = log.Output(zerolog.ConsoleWriter{Out: logFile, NoColor: true, TimeFormat: time.RFC3339})
+	logrus.SetOutput(logFile)
+	stdlog.SetOutput(logFile)
+
+	if Debug {
+		zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	}
 }

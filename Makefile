@@ -4,12 +4,7 @@ ifeq ($(VERSION),)
     VERSION := $(shell git describe --tags --always --dirty="-dev")
 endif
 LDFLAGS := -ldflags '-X "github.com/sjzar/chatlog/pkg/version.Version=$(VERSION)" -w -s'
-TAG := --tags "fts5"
-CGO_EXTRA_LDFLAGS :=
-ifeq ($(OS),Windows_NT)
-	CGO_EXTRA_LDFLAGS := -lgomp
-endif
-CGO_FLAG := CGO_ENABLED=1 CGO_CFLAGS="-I$(abspath $(CURDIR)/third_party/include)" CGO_LDFLAGS="-L$(abspath $(CURDIR)/third_party/lib) $(CGO_EXTRA_LDFLAGS)"
+CGO_FLAG := CGO_ENABLED=1
 
 PLATFORMS := \
     darwin/amd64 \
@@ -58,7 +53,7 @@ test:
 build:
 	@echo "Building for current platform..."
 	@$(MKDIR_BIN)
-	@$(CGO_FLAG) $(GO) build -trimpath $(LDFLAGS) $(TAG) -o bin/$(BINARY_NAME)$(BINARY_SUFFIX) main.go
+	@$(CGO_FLAG) $(GO) build -trimpath $(LDFLAGS) -o bin/$(BINARY_NAME)$(BINARY_SUFFIX) main.go
 	@echo "Done!"
 
 crossbuild: clean
@@ -73,7 +68,7 @@ crossbuild: clean
 		[ "$$os" = "windows" ] && output_name=$$output_name.exe; \
 		echo "Building for $$os/$$arch..."; \
 		echo "Building for $$output_name..."; \
-		@GOOS=$$os GOARCH=$$arch GOARM=$$float $(CGO_FLAG) $(GO) build -trimpath $(LDFLAGS) $(TAG) -o $$output_name main.go ; \
+		@GOOS=$$os GOARCH=$$arch GOARM=$$float $(CGO_FLAG) $(GO) build -trimpath $(LDFLAGS) -o $$output_name main.go ; \
 		if [ "$(ENABLE_UPX)" = "1" ] && echo "$(UPX_PLATFORMS)" | grep -q "$$os/$$arch"; then \
 			echo "Compressing binary $$output_name..." && upx --best $$output_name; \
 		fi; \

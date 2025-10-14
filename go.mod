@@ -8,7 +8,6 @@ require (
 	github.com/cespare/xxhash v1.1.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/gdamore/tcell/v2 v2.8.1
-	github.com/ggerganov/whisper.cpp/bindings/go v0.0.0-20251010042021-85d1d3d3dcd6
 	github.com/gin-gonic/gin v1.10.1
 	github.com/google/uuid v1.6.0
 	github.com/klauspost/compress v1.18.0
@@ -105,5 +104,3 @@ require (
 	golang.org/x/text v0.28.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-replace github.com/ggerganov/whisper.cpp/bindings/go => ./third_party/whispercpp-go

@@ -55,5 +55,8 @@
 		"CGO_ENABLED": "1",
 		"CGO_CFLAGS": "-I${workspaceFolder}/third_party/include",
 		"CGO_LDFLAGS": "-L${workspaceFolder}/third_party/lib"
-	}
+	},
+	"python-envs.defaultEnvManager": "ms-python.python:conda",
+	"python-envs.defaultPackageManager": "ms-python.python:conda",
+	"python-envs.pythonProjects": []
 }

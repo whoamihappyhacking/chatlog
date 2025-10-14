@@ -1,0 +1,19 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"name": "Debug chatlog (CGO)",
+			"type": "go",
+			"request": "launch",
+			"mode": "auto",
+			"program": "${workspaceFolder}/main.go",
+			"cwd": "${workspaceFolder}",
+			"env": {
+				"CGO_ENABLED": "1"
+			},
+			"buildFlags": [],
+			"args": [],
+			"showLog": true
+		}
+	]
+}

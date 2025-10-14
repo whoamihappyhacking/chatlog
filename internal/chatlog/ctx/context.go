@@ -1,7 +1,9 @@
 package ctx
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -9,6 +11,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 	"github.com/sjzar/chatlog/internal/chatlog/conf"
+	"github.com/sjzar/chatlog/internal/speech/whisperdl"
 	"github.com/sjzar/chatlog/internal/wechat"
 	"github.com/sjzar/chatlog/pkg/config"
 	"github.com/sjzar/chatlog/pkg/util"
@@ -26,6 +29,7 @@ type Context struct {
 	mu   sync.RWMutex
 
 	History map[string]conf.ProcessConfig
+	speech  *conf.SpeechConfig
 
 	// 微信账号相关状态
 	Account     string
@@ -80,6 +84,60 @@ func (c *Context) loadConfig() {
 	c.History = c.conf.ParseHistory()
 	c.SwitchHistory(c.conf.LastAccount)
 	c.Refresh()
+	if c.cm != nil {
+		speechPath := filepath.Join(c.cm.Path, "speech.json")
+		if data, err := os.ReadFile(speechPath); err == nil {
+			var sc conf.SpeechConfig
+			if err := json.Unmarshal(data, &sc); err != nil {
+				log.Debug().Err(err).Msg("failed to parse speech config")
+			} else {
+				c.speech = &sc
+			}
+		} else if os.IsNotExist(err) {
+			defaultSpeech := conf.SpeechConfig{Enabled: true}
+			payload, marshalErr := json.MarshalIndent(defaultSpeech, "", "  ")
+			if marshalErr != nil {
+				log.Error().Err(marshalErr).Msg("failed to marshal default speech config")
+			} else if writeErr := os.WriteFile(speechPath, payload, 0600); writeErr != nil {
+				log.Error().Err(writeErr).Msg("failed to write default speech config")
+			} else {
+				c.speech = &defaultSpeech
+				log.Info().Str("path", speechPath).Msg("created default speech config")
+			}
+		}
+		if c.speech != nil {
+			if c.speech.Model == "" {
+				if err := c.ensureDefaultModel(speechPath); err != nil {
+					log.Error().Err(err).Msg("ensure default speech model failed")
+				}
+			}
+			c.speech.Enabled = true
+		}
+	}
+}
+
+func (c *Context) ensureDefaultModel(configPath string) error {
+	if c.cm == nil {
+		return errors.New("config manager unavailable")
+	}
+	modelsDir := filepath.Join(c.cm.Path, "speech-models")
+	if err := os.MkdirAll(modelsDir, 0o755); err != nil {
+		return err
+	}
+	downloader := whisperdl.NewDownloader(modelsDir)
+	rsl, err := downloader.EnsureModel(context.Background(), whisperdl.DefaultModel)
+	if err != nil {
+		return err
+	}
+	c.speech.Model = rsl.Path
+	configBytes, err := json.MarshalIndent(c.speech, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(configPath, configBytes, 0o600); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (c *Context) SwitchHistory(account string) {
@@ -186,7 +244,7 @@ func (c *Context) GetWebhook() *conf.Webhook {
 }
 
 func (c *Context) GetSpeech() *conf.SpeechConfig {
-	return nil
+	return c.speech
 }
 
 func (c *Context) SetHTTPEnabled(enabled bool) {

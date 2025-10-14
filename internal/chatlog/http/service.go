@@ -3,7 +3,6 @@ package http
 import (
 	"context"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -14,7 +13,6 @@ import (
 	"github.com/sjzar/chatlog/internal/chatlog/database"
 	"github.com/sjzar/chatlog/internal/errors"
 	"github.com/sjzar/chatlog/internal/speech"
-	"github.com/sjzar/chatlog/internal/speech/whispercpp"
 )
 
 type Service struct {
@@ -73,25 +71,9 @@ func (s *Service) initSpeech(cfg Config) {
 		return
 	}
 
-	modelPath := strings.TrimSpace(speechCfg.Model)
-	if modelPath == "" {
-		log.Warn().Msg("speech transcription enabled but model path is empty")
-		return
-	}
-
-	opts := speechCfg.ToOptions()
-	transcriber, err := whispercpp.New(whispercpp.Config{
-		ModelPath:      modelPath,
-		DefaultOptions: opts,
-	})
-	if err != nil {
-		log.Err(err).Msg("initialise speech transcriber failed")
-		return
-	}
-
-	s.speechTranscriber = transcriber
-	s.speechOptions = opts
-	log.Info().Msg("speech transcription backend initialised")
+	s.speechOptions = speechCfg.ToOptions()
+	s.speechTranscriber = nil
+	log.Warn().Msg("speech transcription backend is currently disabled; whisper.cpp support removed")
 }
 
 func (s *Service) Start() error {
