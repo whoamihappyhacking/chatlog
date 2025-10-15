@@ -3,7 +3,6 @@ package http
 import (
 	"context"
 	"net/http"
-	"path/filepath"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -73,24 +72,24 @@ func (s *Service) initSpeech(cfg Config) {
 	}
 
 	opts := speechCfg.ToOptions()
-	scriptDir := speechCfg.ScriptDir
-	if scriptDir == "" {
-		scriptDir = filepath.Join(cfg.GetDataDir(), "whisper")
-	}
-	pTranscriber, err := whisper.NewPythonTranscriber(whisper.PythonConfig{
-		ScriptDir:      scriptDir,
-		PythonPath:     speechCfg.PythonExec,
+	timeout := time.Duration(speechCfg.RequestTimeoutSeconds) * time.Second
+	transcriber, err := whisper.NewOpenAITranscriber(whisper.OpenAIConfig{
+		Model:          speechCfg.Model,
+		TranslateModel: speechCfg.TranslateModel,
+		APIKey:         speechCfg.APIKey,
+		BaseURL:        speechCfg.BaseURL,
+		Organization:   speechCfg.Organization,
+		RequestTimeout: timeout,
 		DefaultOptions: opts,
-		Env:            speechCfg.Env,
 	})
 	if err != nil {
-		log.Err(err).Msg("initialise python whisper transcriber failed")
+		log.Err(err).Msg("initialise openai whisper transcriber failed")
 		return
 	}
 
-	s.speechTranscriber = pTranscriber
+	s.speechTranscriber = transcriber
 	s.speechOptions = opts
-	log.Info().Str("script", pTranscriber.ScriptPath()).Msg("speech transcription backend initialised via python whisper")
+	log.Info().Str("model", transcriber.ModelName()).Msg("speech transcription backend initialised via openai whisper")
 }
 
 func (s *Service) Start() error {

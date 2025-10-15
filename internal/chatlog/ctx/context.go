@@ -1,9 +1,7 @@
 package ctx
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -11,7 +9,6 @@ import (
 
 	"github.com/rs/zerolog/log"
 	"github.com/sjzar/chatlog/internal/chatlog/conf"
-	"github.com/sjzar/chatlog/internal/speech/whisperdl"
 	"github.com/sjzar/chatlog/internal/wechat"
 	"github.com/sjzar/chatlog/pkg/config"
 	"github.com/sjzar/chatlog/pkg/util"
@@ -94,7 +91,7 @@ func (c *Context) loadConfig() {
 				c.speech = &sc
 			}
 		} else if os.IsNotExist(err) {
-			defaultSpeech := conf.SpeechConfig{Enabled: true}
+			defaultSpeech := conf.SpeechConfig{Enabled: true, Model: "whisper-1"}
 			payload, marshalErr := json.MarshalIndent(defaultSpeech, "", "  ")
 			if marshalErr != nil {
 				log.Error().Err(marshalErr).Msg("failed to marshal default speech config")
@@ -107,37 +104,11 @@ func (c *Context) loadConfig() {
 		}
 		if c.speech != nil {
 			if c.speech.Model == "" {
-				if err := c.ensureDefaultModel(speechPath); err != nil {
-					log.Error().Err(err).Msg("ensure default speech model failed")
-				}
+				c.speech.Model = "whisper-1"
 			}
 			c.speech.Enabled = true
 		}
 	}
-}
-
-func (c *Context) ensureDefaultModel(configPath string) error {
-	if c.cm == nil {
-		return errors.New("config manager unavailable")
-	}
-	modelsDir := filepath.Join(c.cm.Path, "speech-models")
-	if err := os.MkdirAll(modelsDir, 0o755); err != nil {
-		return err
-	}
-	downloader := whisperdl.NewDownloader(modelsDir)
-	rsl, err := downloader.EnsureModel(context.Background(), whisperdl.DefaultModel)
-	if err != nil {
-		return err
-	}
-	c.speech.Model = rsl.Path
-	configBytes, err := json.MarshalIndent(c.speech, "", "  ")
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(configPath, configBytes, 0o600); err != nil {
-		return err
-	}
-	return nil
 }
 
 func (c *Context) SwitchHistory(account string) {
