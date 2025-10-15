@@ -1,6 +1,6 @@
 package conf
 
-import "github.com/sjzar/chatlog/internal/speech"
+import "github.com/sjzar/chatlog/internal/whisper"
 
 // SpeechConfig controls optional speech-to-text features.
 type SpeechConfig struct {
@@ -12,11 +12,14 @@ type SpeechConfig struct {
 	InitialPrompt       string   `mapstructure:"initial_prompt" json:"initial_prompt"`
 	Temperature         *float64 `mapstructure:"temperature" json:"temperature"`
 	TemperatureFallback *float64 `mapstructure:"temperature_fallback" json:"temperature_fallback"`
+	PythonExec          string   `mapstructure:"python_exec" json:"python_exec"`
+	ScriptDir           string   `mapstructure:"script_dir" json:"script_dir"`
+	Env                 map[string]string `mapstructure:"env" json:"env"`
 }
 
 // ToOptions converts the speech config into runtime options for a transcription backend.
-func (c *SpeechConfig) ToOptions() speech.Options {
-	var opts speech.Options
+func (c *SpeechConfig) ToOptions() whisper.Options {
+	var opts whisper.Options
 
 	if c == nil {
 		return opts

@@ -1,4 +1,4 @@
-package speech
+package whisper
 
 import (
 	"context"

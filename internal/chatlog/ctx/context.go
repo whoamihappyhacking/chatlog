@@ -85,7 +85,7 @@ func (c *Context) loadConfig() {
 	c.SwitchHistory(c.conf.LastAccount)
 	c.Refresh()
 	if c.cm != nil {
-		speechPath := filepath.Join(c.cm.Path, "speech.json")
+		speechPath := filepath.Join(c.cm.Path, "whisper.json")
 		if data, err := os.ReadFile(speechPath); err == nil {
 			var sc conf.SpeechConfig
 			if err := json.Unmarshal(data, &sc); err != nil {

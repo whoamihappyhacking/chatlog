@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"net/http"
+	"path/filepath"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -12,7 +13,7 @@ import (
 	"github.com/sjzar/chatlog/internal/chatlog/conf"
 	"github.com/sjzar/chatlog/internal/chatlog/database"
 	"github.com/sjzar/chatlog/internal/errors"
-	"github.com/sjzar/chatlog/internal/speech"
+	"github.com/sjzar/chatlog/internal/whisper"
 )
 
 type Service struct {
@@ -26,8 +27,8 @@ type Service struct {
 	mcpSSEServer        *server.SSEServer
 	mcpStreamableServer *server.StreamableHTTPServer
 
-	speechTranscriber speech.Transcriber
-	speechOptions     speech.Options
+	speechTranscriber whisper.Transcriber
+	speechOptions     whisper.Options
 }
 
 type Config interface {
@@ -71,9 +72,25 @@ func (s *Service) initSpeech(cfg Config) {
 		return
 	}
 
-	s.speechOptions = speechCfg.ToOptions()
-	s.speechTranscriber = nil
-	log.Warn().Msg("speech transcription backend is currently disabled; whisper.cpp support removed")
+	opts := speechCfg.ToOptions()
+	scriptDir := speechCfg.ScriptDir
+	if scriptDir == "" {
+		scriptDir = filepath.Join(cfg.GetDataDir(), "whisper")
+	}
+	pTranscriber, err := whisper.NewPythonTranscriber(whisper.PythonConfig{
+		ScriptDir:      scriptDir,
+		PythonPath:     speechCfg.PythonExec,
+		DefaultOptions: opts,
+		Env:            speechCfg.Env,
+	})
+	if err != nil {
+		log.Err(err).Msg("initialise python whisper transcriber failed")
+		return
+	}
+
+	s.speechTranscriber = pTranscriber
+	s.speechOptions = opts
+	log.Info().Str("script", pTranscriber.ScriptPath()).Msg("speech transcription backend initialised via python whisper")
 }
 
 func (s *Service) Start() error {

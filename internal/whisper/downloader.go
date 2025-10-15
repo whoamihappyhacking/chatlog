@@ -1,4 +1,4 @@
-package whisperdl
+package whisper
 
 import (
 	"context"
@@ -19,8 +19,8 @@ const DefaultModel = "ggml-tiny.bin"
 // DefaultBaseURL is the upstream location for official whisper.cpp models.
 const DefaultBaseURL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/"
 
-// Result describes the state of the ensured model file.
-type Result struct {
+// DownloadResult describes the state of the ensured model file.
+type DownloadResult struct {
 	Path    string
 	Existed bool
 }
@@ -44,30 +44,30 @@ func NewDownloader(dest string) *Downloader {
 }
 
 // EnsureModel guarantees the named model exists locally and returns its location.
-func (d *Downloader) EnsureModel(ctx context.Context, modelName string) (Result, error) {
+func (d *Downloader) EnsureModel(ctx context.Context, modelName string) (DownloadResult, error) {
 	if err := os.MkdirAll(d.dest, 0o755); err != nil {
-		return Result{}, err
+		return DownloadResult{}, err
 	}
 
 	localName := normalizeModelName(modelName)
 	localPath := filepath.Join(d.dest, localName)
 
 	if info, err := os.Stat(localPath); err == nil && info.Size() > 0 {
-		return Result{Path: localPath, Existed: true}, nil
+		return DownloadResult{Path: localPath, Existed: true}, nil
 	}
 
 	url := d.baseURL + localName
 	tmpPath := localPath + ".downloading"
 
 	if err := d.download(ctx, url, tmpPath); err != nil {
-		return Result{}, err
+		return DownloadResult{}, err
 	}
 
 	if err := os.Rename(tmpPath, localPath); err != nil {
-		return Result{}, err
+		return DownloadResult{}, err
 	}
 
-	return Result{Path: localPath, Existed: false}, nil
+	return DownloadResult{Path: localPath, Existed: false}, nil
 }
 
 func (d *Downloader) download(ctx context.Context, url, destPath string) error {
