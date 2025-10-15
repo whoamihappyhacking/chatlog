@@ -32,6 +32,10 @@ type SpeechConfig struct {
 	Organization          string         `mapstructure:"organization" json:"organization"`
 	Project               string         `mapstructure:"project" json:"project"`
 	Proxy                 string         `mapstructure:"proxy" json:"proxy"`
+	ServiceURL            string         `mapstructure:"service_url" json:"service_url"`
+	ServiceOutput         string         `mapstructure:"service_output" json:"service_output"`
+	WordTimestamps        bool           `mapstructure:"word_timestamps" json:"word_timestamps"`
+	VADFilter             bool           `mapstructure:"vad_filter" json:"vad_filter"`
 	RequestTimeoutSeconds int            `mapstructure:"request_timeout_seconds" json:"request_timeout_seconds"`
 	OpenAI                OpenAISettings `mapstructure:"openai" json:"openai"`
 }
@@ -41,9 +45,11 @@ func (c *SpeechConfig) Normalize() {
 	if c == nil {
 		return
 	}
-	if c.Provider == "" {
-		c.Provider = "openai"
+	provider := strings.ToLower(strings.TrimSpace(c.Provider))
+	if provider == "" {
+		provider = "openai"
 	}
+	c.Provider = provider
 
 	if c.APIKey == "" {
 		c.APIKey = c.OpenAI.APIKey
@@ -66,6 +72,23 @@ func (c *SpeechConfig) Normalize() {
 	c.Organization = strings.TrimSpace(c.Organization)
 	c.Project = strings.TrimSpace(c.Project)
 	c.Proxy = strings.TrimSpace(c.Proxy)
+	c.ServiceURL = strings.TrimSpace(c.ServiceURL)
+	c.ServiceOutput = strings.TrimSpace(c.ServiceOutput)
+
+	switch c.Provider {
+	case "webservice", "local", "docker", "http", "whisper-asr":
+		if c.ServiceURL == "" {
+			c.ServiceURL = "http://127.0.0.1:9000"
+		}
+		if c.ServiceOutput == "" {
+			c.ServiceOutput = "json"
+		}
+		c.ServiceOutput = strings.ToLower(c.ServiceOutput)
+	default:
+		if c.Provider != "openai" {
+			c.Provider = "openai"
+		}
+	}
 }
 
 // PrepareForSave syncs the flattened OpenAI fields back into the legacy nested structure.
@@ -73,9 +96,13 @@ func (c *SpeechConfig) PrepareForSave() {
 	if c == nil {
 		return
 	}
+	c.Provider = strings.ToLower(strings.TrimSpace(c.Provider))
 	if c.Provider == "" {
 		c.Provider = "openai"
 	}
+
+	c.ServiceURL = strings.TrimSpace(c.ServiceURL)
+	c.ServiceOutput = strings.ToLower(strings.TrimSpace(c.ServiceOutput))
 
 	c.OpenAI.APIKey = c.APIKey
 	c.OpenAI.BaseURL = c.BaseURL

@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -80,24 +81,46 @@ func (s *Service) initSpeech(cfg Config) {
 
 	opts := speechCfg.ToOptions()
 	timeout := time.Duration(speechCfg.RequestTimeoutSeconds) * time.Second
-	transcriber, err := whisper.NewOpenAITranscriber(whisper.OpenAIConfig{
-		Model:          speechCfg.Model,
-		TranslateModel: speechCfg.TranslateModel,
-		APIKey:         speechCfg.APIKey,
-		BaseURL:        speechCfg.BaseURL,
-		Organization:   speechCfg.Organization,
-		ProxyURL:       speechCfg.Proxy,
-		RequestTimeout: timeout,
-		DefaultOptions: opts,
-	})
-	if err != nil {
-		log.Err(err).Msg("initialise openai whisper transcriber failed")
-		return
-	}
 
-	s.speechTranscriber = transcriber
-	s.speechOptions = opts
-	log.Info().Str("model", transcriber.ModelName()).Msg("speech transcription backend initialised via openai whisper")
+	provider := strings.ToLower(speechCfg.Provider)
+	switch provider {
+	case "openai":
+		transcriber, err := whisper.NewOpenAITranscriber(whisper.OpenAIConfig{
+			Model:          speechCfg.Model,
+			TranslateModel: speechCfg.TranslateModel,
+			APIKey:         speechCfg.APIKey,
+			BaseURL:        speechCfg.BaseURL,
+			Organization:   speechCfg.Organization,
+			ProxyURL:       speechCfg.Proxy,
+			RequestTimeout: timeout,
+			DefaultOptions: opts,
+		})
+		if err != nil {
+			log.Err(err).Msg("initialise openai whisper transcriber failed")
+			return
+		}
+		s.speechTranscriber = transcriber
+		s.speechOptions = opts
+		log.Info().Str("model", transcriber.ModelName()).Msg("speech transcription backend initialised via openai whisper")
+	case "webservice", "local", "docker", "http", "whisper-asr":
+		transcriber, err := whisper.NewWebServiceTranscriber(whisper.WebServiceConfig{
+			BaseURL:        speechCfg.ServiceURL,
+			OutputFormat:   speechCfg.ServiceOutput,
+			WordTimestamps: speechCfg.WordTimestamps,
+			VADFilter:      speechCfg.VADFilter,
+			RequestTimeout: timeout,
+			DefaultOptions: opts,
+		})
+		if err != nil {
+			log.Err(err).Msg("initialise webservice whisper transcriber failed")
+			return
+		}
+		s.speechTranscriber = transcriber
+		s.speechOptions = opts
+		log.Info().Str("base_url", speechCfg.ServiceURL).Msg("speech transcription backend initialised via whisper webservice")
+	default:
+		log.Warn().Str("provider", speechCfg.Provider).Msg("unsupported speech provider; speech transcription disabled")
+	}
 }
 
 func (s *Service) ReloadSpeech() {

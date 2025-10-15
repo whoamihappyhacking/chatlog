@@ -30,16 +30,18 @@ const (
 type settingsKey string
 
 const (
-	settingKeyHTTPAddr      settingsKey = "http_addr"
-	settingKeyToggleListen  settingsKey = "toggle_listen"
-	settingKeyWorkDir       settingsKey = "work_dir"
-	settingKeyDataDir       settingsKey = "data_dir"
-	settingKeyDataKey       settingsKey = "data_key"
-	settingKeyImgKey        settingsKey = "img_key"
-	settingKeyOpenAIAPIKey  settingsKey = "openai_api_key"
-	settingKeyOpenAIBaseURL settingsKey = "openai_base_url"
-	settingKeyOpenAIProxy   settingsKey = "openai_proxy"
-	settingKeyOpenAITimeout settingsKey = "openai_timeout"
+	settingKeySpeechProvider  settingsKey = "speech_provider"
+	settingKeyLocalServiceURL settingsKey = "local_service_url"
+	settingKeyHTTPAddr        settingsKey = "http_addr"
+	settingKeyToggleListen    settingsKey = "toggle_listen"
+	settingKeyWorkDir         settingsKey = "work_dir"
+	settingKeyDataDir         settingsKey = "data_dir"
+	settingKeyDataKey         settingsKey = "data_key"
+	settingKeyImgKey          settingsKey = "img_key"
+	settingKeyOpenAIAPIKey    settingsKey = "openai_api_key"
+	settingKeyOpenAIBaseURL   settingsKey = "openai_base_url"
+	settingKeyOpenAIProxy     settingsKey = "openai_proxy"
+	settingKeyOpenAITimeout   settingsKey = "openai_timeout"
 )
 
 type App struct {
@@ -534,16 +536,18 @@ func (a *App) initSettingsTab() {
 	a.settingsMenu.SetCancelFunc(nil)
 
 	a.settingsItems = []*menu.Item{
-		a.newSettingsItem(1, "设置 HTTP 服务地址", settingKeyHTTPAddr, a.settingHTTPPort),
-		a.newSettingsItem(2, "切换局域网监听", settingKeyToggleListen, a.toggleListen),
-		a.newSettingsItem(3, "设置工作目录", settingKeyWorkDir, a.settingWorkDir),
-		a.newSettingsItem(4, "设置数据目录", settingKeyDataDir, a.settingDataDir),
-		a.newSettingsItem(5, "设置数据密钥", settingKeyDataKey, a.settingDataKey),
-		a.newSettingsItem(6, "设置图片密钥", settingKeyImgKey, a.settingImgKey),
-		a.newSettingsItem(7, "设置 OpenAI API Key", settingKeyOpenAIAPIKey, a.settingOpenAIAPIKey),
-		a.newSettingsItem(8, "设置 OpenAI Base URL", settingKeyOpenAIBaseURL, a.settingOpenAIBaseURL),
-		a.newSettingsItem(9, "设置 OpenAI 代理", settingKeyOpenAIProxy, a.settingOpenAIProxy),
-		a.newSettingsItem(10, "设置 OpenAI 请求超时", settingKeyOpenAITimeout, a.settingOpenAITimeout),
+		a.newSettingsItem(1, "设置语音服务提供商", settingKeySpeechProvider, a.settingSpeechProvider),
+		a.newSettingsItem(2, "设置本地语音服务地址", settingKeyLocalServiceURL, a.settingLocalServiceURL),
+		a.newSettingsItem(3, "设置 HTTP 服务地址", settingKeyHTTPAddr, a.settingHTTPPort),
+		a.newSettingsItem(4, "切换局域网监听", settingKeyToggleListen, a.toggleListen),
+		a.newSettingsItem(5, "设置工作目录", settingKeyWorkDir, a.settingWorkDir),
+		a.newSettingsItem(6, "设置数据目录", settingKeyDataDir, a.settingDataDir),
+		a.newSettingsItem(7, "设置数据密钥", settingKeyDataKey, a.settingDataKey),
+		a.newSettingsItem(8, "设置图片密钥", settingKeyImgKey, a.settingImgKey),
+		a.newSettingsItem(9, "设置 OpenAI API Key", settingKeyOpenAIAPIKey, a.settingOpenAIAPIKey),
+		a.newSettingsItem(10, "设置 OpenAI Base URL", settingKeyOpenAIBaseURL, a.settingOpenAIBaseURL),
+		a.newSettingsItem(11, "设置 OpenAI 代理", settingKeyOpenAIProxy, a.settingOpenAIProxy),
+		a.newSettingsItem(12, "设置 OpenAI 请求超时", settingKeyOpenAITimeout, a.settingOpenAITimeout),
 	}
 
 	a.settingsMenu.SetItems(a.settingsItems)
@@ -572,8 +576,42 @@ func (a *App) refreshSettingsMenu() {
 		return
 	}
 
+	speechCfg := a.ctx.GetSpeech()
+
+	providerLabel := "OpenAI 官方服务"
+	isWebService := false
+	if speechCfg != nil {
+		switch strings.ToLower(strings.TrimSpace(speechCfg.Provider)) {
+		case "webservice", "local", "docker", "http", "whisper-asr":
+			providerLabel = "本地 Docker Whisper"
+			isWebService = true
+		case "openai", "":
+			providerLabel = "OpenAI 官方服务"
+		default:
+			providerLabel = speechCfg.Provider
+		}
+	}
+
+	if item := a.settingsItemMap[settingKeySpeechProvider]; item != nil {
+		item.Description = fmt.Sprintf("当前提供商: %s", providerLabel)
+	}
+
+	if item := a.settingsItemMap[settingKeyLocalServiceURL]; item != nil {
+		fallback := "http://127.0.0.1:9000"
+		current := fallback
+		if speechCfg != nil {
+			current = formatPathWithFallback(speechCfg.ServiceURL, fallback)
+		}
+		suffix := ""
+		if speechCfg != nil && !isWebService {
+			suffix = " (备用)"
+		}
+		item.Description = fmt.Sprintf("当前服务地址: %s%s", current, suffix)
+	}
+
 	if item := a.settingsItemMap[settingKeyHTTPAddr]; item != nil {
-		item.Description = fmt.Sprintf("配置 HTTP 服务监听的地址 (当前: %s)", formatPathWithFallback(a.ctx.GetHTTPAddr(), "未设置"))
+		current := formatPathWithFallback(a.ctx.GetHTTPAddr(), "127.0.0.1:5030")
+		item.Description = fmt.Sprintf("当前监听地址: %s", current)
 	}
 
 	if item := a.settingsItemMap[settingKeyToggleListen]; item != nil {
@@ -588,41 +626,51 @@ func (a *App) refreshSettingsMenu() {
 	}
 
 	if item := a.settingsItemMap[settingKeyWorkDir]; item != nil {
-		item.Description = fmt.Sprintf("配置数据解密后的存储目录 (当前: %s)", formatPathWithFallback(a.ctx.WorkDir, "未设置"))
+		item.Description = fmt.Sprintf("当前工作目录: %s", formatPathWithFallback(a.ctx.WorkDir, "未设置"))
 	}
 
 	if item := a.settingsItemMap[settingKeyDataDir]; item != nil {
-		item.Description = fmt.Sprintf("配置微信数据目录 (当前: %s)", formatPathWithFallback(a.ctx.DataDir, "未设置"))
+		item.Description = fmt.Sprintf("当前数据目录: %s", formatPathWithFallback(a.ctx.DataDir, "未设置"))
 	}
 
 	if item := a.settingsItemMap[settingKeyDataKey]; item != nil {
-		item.Description = fmt.Sprintf("配置数据密钥 (当前: %s)", formatSecretSummary(a.ctx.DataKey))
+		item.Description = fmt.Sprintf("当前数据密钥: %s", formatSecretSummary(a.ctx.DataKey))
 	}
 
 	if item := a.settingsItemMap[settingKeyImgKey]; item != nil {
-		item.Description = fmt.Sprintf("配置图片密钥 (当前: %s)", formatSecretSummary(a.ctx.ImgKey))
-	}
-
-	speech := a.ctx.GetSpeech()
-	var speechCfg conf.SpeechConfig
-	if speech != nil {
-		speechCfg = *speech
+		item.Description = fmt.Sprintf("当前图片密钥: %s", formatSecretSummary(a.ctx.ImgKey))
 	}
 
 	if item := a.settingsItemMap[settingKeyOpenAIAPIKey]; item != nil {
-		item.Description = fmt.Sprintf("配置 OpenAI API Key (当前: %s)", formatSecretSummary(speechCfg.APIKey))
+		openAIKey := "未设置"
+		if speechCfg != nil {
+			openAIKey = formatSecretSummary(speechCfg.APIKey)
+		}
+		item.Description = fmt.Sprintf("当前 API Key: %s", openAIKey)
 	}
 
 	if item := a.settingsItemMap[settingKeyOpenAIBaseURL]; item != nil {
-		item.Description = fmt.Sprintf("配置 OpenAI Base URL (当前: %s)", formatPathWithFallback(speechCfg.BaseURL, "官方默认"))
+		baseURL := "未设置"
+		if speechCfg != nil {
+			baseURL = formatPathWithFallback(speechCfg.BaseURL, "未设置")
+		}
+		item.Description = fmt.Sprintf("当前 Base URL: %s", baseURL)
 	}
 
 	if item := a.settingsItemMap[settingKeyOpenAIProxy]; item != nil {
-		item.Description = fmt.Sprintf("配置 OpenAI 代理 (当前: %s)", formatPathWithFallback(speechCfg.Proxy, "未设置"))
+		proxy := "未设置"
+		if speechCfg != nil {
+			proxy = formatPathWithFallback(speechCfg.Proxy, "未设置")
+		}
+		item.Description = fmt.Sprintf("当前代理: %s", proxy)
 	}
 
 	if item := a.settingsItemMap[settingKeyOpenAITimeout]; item != nil {
-		item.Description = fmt.Sprintf("配置 OpenAI 请求超时 (当前: %s)", formatTimeoutSummary(speechCfg.RequestTimeoutSeconds))
+		timeoutValue := 0
+		if speechCfg != nil {
+			timeoutValue = speechCfg.RequestTimeoutSeconds
+		}
+		item.Description = fmt.Sprintf("当前请求超时: %s", formatTimeoutSummary(timeoutValue))
 	}
 
 	a.settingsMenu.SetItems(a.settingsItems)
@@ -630,9 +678,15 @@ func (a *App) refreshSettingsMenu() {
 
 func (a *App) updateSpeechConfig(mutator func(*conf.SpeechConfig)) error {
 	current := a.ctx.GetSpeech()
-	cfg := conf.SpeechConfig{Enabled: true, Provider: "openai"}
+	cfg := conf.SpeechConfig{Enabled: true}
 	if current != nil {
 		cfg = *current
+	} else {
+		cfg.Provider = "openai"
+	}
+
+	if cfg.Provider == "" {
+		cfg.Provider = "openai"
 	}
 
 	if mutator != nil {
@@ -641,6 +695,79 @@ func (a *App) updateSpeechConfig(mutator func(*conf.SpeechConfig)) error {
 
 	cfg.Normalize()
 	return a.m.SaveSpeechConfig(&cfg)
+}
+
+func (a *App) settingSpeechProvider() {
+	buttons := []string{"OpenAI 官方服务", "本地 Docker Whisper", "取消"}
+	a.showModal("选择语音服务提供商", buttons, func(buttonIndex int, buttonLabel string) {
+		a.mainPages.RemovePage("modal")
+
+		var (
+			provider string
+			message  string
+		)
+
+		switch buttonLabel {
+		case "OpenAI 官方服务":
+			provider = "openai"
+			message = "语音服务已切换到 OpenAI 官方服务"
+		case "本地 Docker Whisper":
+			provider = "webservice"
+			message = "语音服务已切换到本地 Docker Whisper"
+		default:
+			return
+		}
+
+		if err := a.updateSpeechConfig(func(cfg *conf.SpeechConfig) {
+			cfg.Provider = provider
+			if provider == "webservice" && strings.TrimSpace(cfg.ServiceURL) == "" {
+				cfg.ServiceURL = "http://127.0.0.1:9000"
+			}
+		}); err != nil {
+			a.showError(err)
+			return
+		}
+
+		a.refreshSettingsMenu()
+		if message != "" {
+			a.showInfo(message)
+		}
+	})
+}
+
+func (a *App) settingLocalServiceURL() {
+	formView := form.NewForm("设置本地语音服务地址")
+
+	speech := a.ctx.GetSpeech()
+	currentValue := "http://127.0.0.1:9000"
+	if speech != nil {
+		currentValue = formatPathWithFallback(speech.ServiceURL, currentValue)
+	}
+
+	tempValue := currentValue
+
+	formView.AddInputField("服务地址", tempValue, 0, nil, func(text string) {
+		tempValue = text
+	})
+
+	formView.AddButton("保存", func() {
+		if err := a.updateSpeechConfig(func(cfg *conf.SpeechConfig) {
+			cfg.ServiceURL = tempValue
+		}); err != nil {
+			a.showError(err)
+			return
+		}
+		a.mainPages.RemovePage("submenu2")
+		a.refreshSettingsMenu()
+		a.showInfo("本地语音服务地址已更新")
+	})
+
+	formView.AddButton("取消", func() {
+		a.mainPages.RemovePage("submenu2")
+	})
+
+	a.mainPages.AddPage("submenu2", formView, true, true)
+	a.SetFocus(formView)
 }
 
 func (a *App) settingOpenAIAPIKey() {
