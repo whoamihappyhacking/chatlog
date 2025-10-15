@@ -322,6 +322,19 @@ func (m *Manager) StopAutoDecrypt() error {
 	return nil
 }
 
+func (m *Manager) SaveSpeechConfig(cfg *conf.SpeechConfig) error {
+	if cfg == nil {
+		return fmt.Errorf("speech config is nil")
+	}
+	if err := m.ctx.SaveSpeechConfig(cfg); err != nil {
+		return err
+	}
+	if m.http != nil {
+		m.http.ReloadSpeech()
+	}
+	return nil
+}
+
 func (m *Manager) RefreshSession() error {
 	if m.db.GetDB() == nil {
 		if err := m.db.Start(); err != nil {

@@ -2,6 +2,7 @@ package ctx
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -25,8 +26,9 @@ type Context struct {
 	cm   *config.Manager
 	mu   sync.RWMutex
 
-	History map[string]conf.ProcessConfig
-	speech  *conf.SpeechConfig
+	History    map[string]conf.ProcessConfig
+	speech     *conf.SpeechConfig
+	speechPath string
 
 	// 微信账号相关状态
 	Account     string
@@ -83,21 +85,25 @@ func (c *Context) loadConfig() {
 	c.Refresh()
 	if c.cm != nil {
 		speechPath := filepath.Join(c.cm.Path, "whisper.json")
+		c.speechPath = speechPath
 		if data, err := os.ReadFile(speechPath); err == nil {
 			var sc conf.SpeechConfig
 			if err := json.Unmarshal(data, &sc); err != nil {
 				log.Debug().Err(err).Msg("failed to parse speech config")
 			} else {
+				sc.Normalize()
 				c.speech = &sc
 			}
 		} else if os.IsNotExist(err) {
-			defaultSpeech := conf.SpeechConfig{Enabled: true, Model: "whisper-1"}
+			defaultSpeech := conf.SpeechConfig{Enabled: true, Provider: "openai", Model: "whisper-1"}
+			defaultSpeech.PrepareForSave()
 			payload, marshalErr := json.MarshalIndent(defaultSpeech, "", "  ")
 			if marshalErr != nil {
 				log.Error().Err(marshalErr).Msg("failed to marshal default speech config")
 			} else if writeErr := os.WriteFile(speechPath, payload, 0600); writeErr != nil {
 				log.Error().Err(writeErr).Msg("failed to write default speech config")
 			} else {
+				defaultSpeech.Normalize()
 				c.speech = &defaultSpeech
 				log.Info().Str("path", speechPath).Msg("created default speech config")
 			}
@@ -109,6 +115,41 @@ func (c *Context) loadConfig() {
 			c.speech.Enabled = true
 		}
 	}
+}
+
+func (c *Context) SaveSpeechConfig(cfg *conf.SpeechConfig) error {
+	if cfg == nil {
+		return errors.New("speech config is nil")
+	}
+	if c.cm == nil {
+		return errors.New("config manager unavailable")
+	}
+
+	cfg.Enabled = true
+	cfg.Normalize()
+	cfg.PrepareForSave()
+
+	path := c.speechPath
+	if path == "" {
+		path = filepath.Join(c.cm.Path, "whisper.json")
+		c.speechPath = path
+	}
+
+	payload, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, payload, 0o600); err != nil {
+		return err
+	}
+
+	cfgCopy := *cfg
+	cfgCopy.Normalize()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.speech = &cfgCopy
+	return nil
 }
 
 func (c *Context) SwitchHistory(account string) {

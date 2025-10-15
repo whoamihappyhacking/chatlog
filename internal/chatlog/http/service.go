@@ -66,10 +66,17 @@ func NewService(conf Config, db *database.Service) *Service {
 }
 
 func (s *Service) initSpeech(cfg Config) {
+	if s.speechTranscriber != nil {
+		s.speechTranscriber.Close()
+		s.speechTranscriber = nil
+	}
+
 	speechCfg := cfg.GetSpeech()
 	if speechCfg == nil || !speechCfg.Enabled {
 		return
 	}
+
+	speechCfg.Normalize()
 
 	opts := speechCfg.ToOptions()
 	timeout := time.Duration(speechCfg.RequestTimeoutSeconds) * time.Second
@@ -79,6 +86,7 @@ func (s *Service) initSpeech(cfg Config) {
 		APIKey:         speechCfg.APIKey,
 		BaseURL:        speechCfg.BaseURL,
 		Organization:   speechCfg.Organization,
+		ProxyURL:       speechCfg.Proxy,
 		RequestTimeout: timeout,
 		DefaultOptions: opts,
 	})
@@ -90,6 +98,10 @@ func (s *Service) initSpeech(cfg Config) {
 	s.speechTranscriber = transcriber
 	s.speechOptions = opts
 	log.Info().Str("model", transcriber.ModelName()).Msg("speech transcription backend initialised via openai whisper")
+}
+
+func (s *Service) ReloadSpeech() {
+	s.initSpeech(s.conf)
 }
 
 func (s *Service) Start() error {

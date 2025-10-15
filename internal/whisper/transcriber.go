@@ -6,8 +6,11 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math"
+	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -26,6 +29,7 @@ type OpenAIConfig struct {
 	APIKey         string
 	BaseURL        string
 	Organization   string
+	ProxyURL       string
 	RequestTimeout time.Duration
 	DefaultOptions Options
 }
@@ -56,7 +60,13 @@ func NewOpenAITranscriber(cfg OpenAIConfig) (*OpenAITranscriber, error) {
 	if cfg.BaseURL != "" {
 		opts = append(opts, option.WithBaseURL(cfg.BaseURL))
 	}
-	if cfg.RequestTimeout > 0 {
+	if cfg.ProxyURL != "" {
+		client, err := buildHTTPClient(cfg.ProxyURL, cfg.RequestTimeout)
+		if err != nil {
+			return nil, err
+		}
+		opts = append(opts, option.WithHTTPClient(client))
+	} else if cfg.RequestTimeout > 0 {
 		opts = append(opts, option.WithRequestTimeout(cfg.RequestTimeout))
 	}
 
@@ -69,6 +79,32 @@ func NewOpenAITranscriber(cfg OpenAIConfig) (*OpenAITranscriber, error) {
 		translateModel: translateModel,
 		defaultOptions: cfg.DefaultOptions,
 	}, nil
+}
+
+func buildHTTPClient(proxyURL string, timeout time.Duration) (*http.Client, error) {
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	var baseTransport *http.Transport
+	if ok {
+		baseTransport = transport.Clone()
+	} else {
+		baseTransport = &http.Transport{Proxy: http.ProxyFromEnvironment}
+	}
+
+	if proxyURL != "" {
+		parsed, err := url.Parse(proxyURL)
+		if err != nil {
+			return nil, fmt.Errorf("invalid proxy url: %w", err)
+		}
+		baseTransport.Proxy = http.ProxyURL(parsed)
+	}
+
+	client := &http.Client{
+		Transport: baseTransport,
+	}
+	if timeout > 0 {
+		client.Timeout = timeout
+	}
+	return client, nil
 }
 
 // Close releases resources held by the transcriber. No-op for the OpenAI backend.

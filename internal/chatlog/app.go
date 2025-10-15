@@ -2,13 +2,14 @@ package chatlog
 
 import (
 	"fmt"
+	"net"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
 	"time"
 
-	"net"
-	"strings"
-
+	"github.com/sjzar/chatlog/internal/chatlog/conf"
 	"github.com/sjzar/chatlog/internal/chatlog/ctx"
 	"github.com/sjzar/chatlog/internal/ui/footer"
 	"github.com/sjzar/chatlog/internal/ui/form"
@@ -26,6 +27,21 @@ const (
 	RefreshInterval = 1000 * time.Millisecond
 )
 
+type settingsKey string
+
+const (
+	settingKeyHTTPAddr      settingsKey = "http_addr"
+	settingKeyToggleListen  settingsKey = "toggle_listen"
+	settingKeyWorkDir       settingsKey = "work_dir"
+	settingKeyDataDir       settingsKey = "data_dir"
+	settingKeyDataKey       settingsKey = "data_key"
+	settingKeyImgKey        settingsKey = "img_key"
+	settingKeyOpenAIAPIKey  settingsKey = "openai_api_key"
+	settingKeyOpenAIBaseURL settingsKey = "openai_base_url"
+	settingKeyOpenAIProxy   settingsKey = "openai_proxy"
+	settingKeyOpenAITimeout settingsKey = "openai_timeout"
+)
+
 type App struct {
 	*tview.Application
 
@@ -40,26 +56,31 @@ type App struct {
 	footer    *footer.Footer
 
 	// tab
-	menu      *menu.Menu
-	help      *help.Help
-	activeTab int
-	tabCount  int
+	menu            *menu.Menu
+	help            *help.Help
+	settingsMenu    *menu.SubMenu
+	settingsItems   []*menu.Item
+	settingsItemMap map[settingsKey]*menu.Item
+	activeTab       int
+	tabCount        int
 }
 
 func NewApp(ctx *ctx.Context, m *Manager) *App {
 	app := &App{
-		ctx:         ctx,
-		m:           m,
-		Application: tview.NewApplication(),
-		mainPages:   tview.NewPages(),
-		infoBar:     infobar.New(),
-		tabPages:    tview.NewPages(),
-		footer:      footer.New(),
-		menu:        menu.New("主菜单"),
-		help:        help.New(),
+		ctx:             ctx,
+		m:               m,
+		Application:     tview.NewApplication(),
+		mainPages:       tview.NewPages(),
+		infoBar:         infobar.New(),
+		tabPages:        tview.NewPages(),
+		footer:          footer.New(),
+		menu:            menu.New("主菜单"),
+		help:            help.New(),
+		settingsItemMap: make(map[settingsKey]*menu.Item),
 	}
 
 	app.initMenu()
+	app.initSettingsTab()
 
 	app.updateMenuItemsState()
 
@@ -79,7 +100,12 @@ func (a *App) Run() error {
 	a.tabPages.
 		AddPage("0", a.menu, true, true).
 		AddPage("1", a.help, true, false)
-	a.tabCount = 2
+	if a.settingsMenu != nil {
+		a.tabPages.AddPage("2", a.settingsMenu, true, false)
+		a.tabCount = 3
+	} else {
+		a.tabCount = 2
+	}
 
 	a.SetInputCapture(a.inputCapture)
 
@@ -124,6 +150,8 @@ func (a *App) updateMenuItemsState() {
 				item.Description = "启动本地 HTTP & MCP 服务器"
 			}
 		}
+
+		a.refreshSettingsMenu()
 	}
 }
 
@@ -134,6 +162,26 @@ func (a *App) switchTab(step int) {
 	}
 	a.activeTab = index
 	a.tabPages.SwitchToPage(fmt.Sprint(a.activeTab))
+	switch a.activeTab {
+	case 0:
+		a.SetFocus(a.menu)
+	case 1:
+		a.SetFocus(a.help)
+	case 2:
+		if a.settingsMenu != nil {
+			a.SetFocus(a.settingsMenu)
+		}
+	}
+}
+
+func (a *App) focusSettingsTab() {
+	if a.settingsMenu == nil {
+		return
+	}
+	a.activeTab = 2
+	a.tabPages.SwitchToPage("2")
+	a.refreshSettingsMenu()
+	a.SetFocus(a.settingsMenu)
 }
 
 func (a *App) refresh() {
@@ -241,6 +289,7 @@ func (a *App) initMenu() {
 					} else {
 						// 解密成功
 						modal.SetText("获取密钥成功")
+						a.refreshSettingsMenu()
 					}
 
 					// 添加确认按钮
@@ -448,7 +497,9 @@ func (a *App) initMenu() {
 		Index:       6,
 		Name:        "设置",
 		Description: "设置应用程序选项",
-		Selected:    a.settingSelected,
+		Selected: func(*menu.Item) {
+			a.focusSettingsTab()
+		},
 	}
 
 	selectAccount := &menu.Item{
@@ -475,65 +526,271 @@ func (a *App) initMenu() {
 	})
 }
 
-// settingItem 表示一个设置项
-type settingItem struct {
-	name        string
-	description string
-	action      func()
+func (a *App) initSettingsTab() {
+	a.settingsMenu = menu.NewSubMenu("设置")
+	if a.settingsMenu == nil {
+		return
+	}
+	a.settingsMenu.SetCancelFunc(nil)
+
+	a.settingsItems = []*menu.Item{
+		a.newSettingsItem(1, "设置 HTTP 服务地址", settingKeyHTTPAddr, a.settingHTTPPort),
+		a.newSettingsItem(2, "切换局域网监听", settingKeyToggleListen, a.toggleListen),
+		a.newSettingsItem(3, "设置工作目录", settingKeyWorkDir, a.settingWorkDir),
+		a.newSettingsItem(4, "设置数据目录", settingKeyDataDir, a.settingDataDir),
+		a.newSettingsItem(5, "设置数据密钥", settingKeyDataKey, a.settingDataKey),
+		a.newSettingsItem(6, "设置图片密钥", settingKeyImgKey, a.settingImgKey),
+		a.newSettingsItem(7, "设置 OpenAI API Key", settingKeyOpenAIAPIKey, a.settingOpenAIAPIKey),
+		a.newSettingsItem(8, "设置 OpenAI Base URL", settingKeyOpenAIBaseURL, a.settingOpenAIBaseURL),
+		a.newSettingsItem(9, "设置 OpenAI 代理", settingKeyOpenAIProxy, a.settingOpenAIProxy),
+		a.newSettingsItem(10, "设置 OpenAI 请求超时", settingKeyOpenAITimeout, a.settingOpenAITimeout),
+	}
+
+	a.settingsMenu.SetItems(a.settingsItems)
+	a.refreshSettingsMenu()
 }
 
-func (a *App) settingSelected(i *menu.Item) {
-
-	settings := []settingItem{
-		{
-			name:        "设置 HTTP 服务地址",
-			description: "配置 HTTP 服务监听的地址",
-			action:      a.settingHTTPPort,
-		},
-		{
-			name:        "切换局域网监听",
-			description: "切换局域网访问限制",
-			action:      a.toggleListen,
-		},
-		{
-			name:        "设置工作目录",
-			description: "配置数据解密后的存储目录",
-			action:      a.settingWorkDir,
-		},
-		{
-			name:        "设置数据密钥",
-			description: "配置数据解密密钥",
-			action:      a.settingDataKey,
-		},
-		{
-			name:        "设置图片密钥",
-			description: "配置图片解密密钥",
-			action:      a.settingImgKey,
-		},
-		{
-			name:        "设置数据目录",
-			description: "配置微信数据文件所在目录",
-			action:      a.settingDataDir,
+func (a *App) newSettingsItem(index int, name string, key settingsKey, action func()) *menu.Item {
+	item := &menu.Item{
+		Index: index,
+		Name:  name,
+		Selected: func(*menu.Item) {
+			if action != nil {
+				action()
+			}
 		},
 	}
+	if a.settingsItemMap == nil {
+		a.settingsItemMap = make(map[settingsKey]*menu.Item)
+	}
+	a.settingsItemMap[key] = item
+	return item
+}
 
-	subMenu := menu.NewSubMenu("设置")
-	for idx, setting := range settings {
-		item := &menu.Item{
-			Index:       idx + 1,
-			Name:        setting.name,
-			Description: setting.description,
-			Selected: func(action func()) func(*menu.Item) {
-				return func(*menu.Item) {
-					action()
-				}
-			}(setting.action),
+func (a *App) refreshSettingsMenu() {
+	if a.settingsMenu == nil || len(a.settingsItems) == 0 {
+		return
+	}
+
+	if item := a.settingsItemMap[settingKeyHTTPAddr]; item != nil {
+		item.Description = fmt.Sprintf("配置 HTTP 服务监听的地址 (当前: %s)", formatPathWithFallback(a.ctx.GetHTTPAddr(), "未设置"))
+	}
+
+	if item := a.settingsItemMap[settingKeyToggleListen]; item != nil {
+		host := a.ctx.GetHTTPAddr()
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
 		}
-		subMenu.AddItem(item)
+		if strings.TrimSpace(host) == "" {
+			host = "127.0.0.1"
+		}
+		item.Description = fmt.Sprintf("当前监听主机: %s", host)
 	}
 
-	a.mainPages.AddPage("submenu", subMenu, true, true)
-	a.SetFocus(subMenu)
+	if item := a.settingsItemMap[settingKeyWorkDir]; item != nil {
+		item.Description = fmt.Sprintf("配置数据解密后的存储目录 (当前: %s)", formatPathWithFallback(a.ctx.WorkDir, "未设置"))
+	}
+
+	if item := a.settingsItemMap[settingKeyDataDir]; item != nil {
+		item.Description = fmt.Sprintf("配置微信数据目录 (当前: %s)", formatPathWithFallback(a.ctx.DataDir, "未设置"))
+	}
+
+	if item := a.settingsItemMap[settingKeyDataKey]; item != nil {
+		item.Description = fmt.Sprintf("配置数据密钥 (当前: %s)", formatSecretSummary(a.ctx.DataKey))
+	}
+
+	if item := a.settingsItemMap[settingKeyImgKey]; item != nil {
+		item.Description = fmt.Sprintf("配置图片密钥 (当前: %s)", formatSecretSummary(a.ctx.ImgKey))
+	}
+
+	speech := a.ctx.GetSpeech()
+	var speechCfg conf.SpeechConfig
+	if speech != nil {
+		speechCfg = *speech
+	}
+
+	if item := a.settingsItemMap[settingKeyOpenAIAPIKey]; item != nil {
+		item.Description = fmt.Sprintf("配置 OpenAI API Key (当前: %s)", formatSecretSummary(speechCfg.APIKey))
+	}
+
+	if item := a.settingsItemMap[settingKeyOpenAIBaseURL]; item != nil {
+		item.Description = fmt.Sprintf("配置 OpenAI Base URL (当前: %s)", formatPathWithFallback(speechCfg.BaseURL, "官方默认"))
+	}
+
+	if item := a.settingsItemMap[settingKeyOpenAIProxy]; item != nil {
+		item.Description = fmt.Sprintf("配置 OpenAI 代理 (当前: %s)", formatPathWithFallback(speechCfg.Proxy, "未设置"))
+	}
+
+	if item := a.settingsItemMap[settingKeyOpenAITimeout]; item != nil {
+		item.Description = fmt.Sprintf("配置 OpenAI 请求超时 (当前: %s)", formatTimeoutSummary(speechCfg.RequestTimeoutSeconds))
+	}
+
+	a.settingsMenu.SetItems(a.settingsItems)
+}
+
+func (a *App) updateSpeechConfig(mutator func(*conf.SpeechConfig)) error {
+	current := a.ctx.GetSpeech()
+	cfg := conf.SpeechConfig{Enabled: true, Provider: "openai"}
+	if current != nil {
+		cfg = *current
+	}
+
+	if mutator != nil {
+		mutator(&cfg)
+	}
+
+	cfg.Normalize()
+	return a.m.SaveSpeechConfig(&cfg)
+}
+
+func (a *App) settingOpenAIAPIKey() {
+	formView := form.NewForm("设置 OpenAI API Key")
+	speech := a.ctx.GetSpeech()
+	currentValue := ""
+	if speech != nil {
+		currentValue = speech.APIKey
+	}
+	tempValue := currentValue
+
+	formView.AddInputField("API Key", tempValue, 0, nil, func(text string) {
+		tempValue = text
+	})
+
+	formView.AddButton("保存", func() {
+		if err := a.updateSpeechConfig(func(cfg *conf.SpeechConfig) {
+			cfg.APIKey = tempValue
+		}); err != nil {
+			a.showError(err)
+			return
+		}
+		a.mainPages.RemovePage("submenu2")
+		a.refreshSettingsMenu()
+		a.showInfo("OpenAI API Key 已更新")
+	})
+
+	formView.AddButton("取消", func() {
+		a.mainPages.RemovePage("submenu2")
+	})
+
+	a.mainPages.AddPage("submenu2", formView, true, true)
+	a.SetFocus(formView)
+}
+
+func (a *App) settingOpenAIBaseURL() {
+	formView := form.NewForm("设置 OpenAI Base URL")
+	speech := a.ctx.GetSpeech()
+	currentValue := ""
+	if speech != nil {
+		currentValue = speech.BaseURL
+	}
+	tempValue := currentValue
+
+	formView.AddInputField("Base URL", tempValue, 0, nil, func(text string) {
+		tempValue = text
+	})
+
+	formView.AddButton("保存", func() {
+		if err := a.updateSpeechConfig(func(cfg *conf.SpeechConfig) {
+			cfg.BaseURL = tempValue
+		}); err != nil {
+			a.showError(err)
+			return
+		}
+		a.mainPages.RemovePage("submenu2")
+		a.refreshSettingsMenu()
+		a.showInfo("OpenAI Base URL 已更新")
+	})
+
+	formView.AddButton("取消", func() {
+		a.mainPages.RemovePage("submenu2")
+	})
+
+	a.mainPages.AddPage("submenu2", formView, true, true)
+	a.SetFocus(formView)
+}
+
+func (a *App) settingOpenAIProxy() {
+	formView := form.NewForm("设置 OpenAI 代理")
+	speech := a.ctx.GetSpeech()
+	currentValue := ""
+	if speech != nil {
+		currentValue = speech.Proxy
+	}
+	tempValue := currentValue
+
+	formView.AddInputField("代理地址", tempValue, 0, nil, func(text string) {
+		tempValue = text
+	})
+
+	formView.AddButton("保存", func() {
+		if err := a.updateSpeechConfig(func(cfg *conf.SpeechConfig) {
+			cfg.Proxy = tempValue
+		}); err != nil {
+			a.showError(err)
+			return
+		}
+		a.mainPages.RemovePage("submenu2")
+		a.refreshSettingsMenu()
+		a.showInfo("OpenAI 代理已更新")
+	})
+
+	formView.AddButton("取消", func() {
+		a.mainPages.RemovePage("submenu2")
+	})
+
+	a.mainPages.AddPage("submenu2", formView, true, true)
+	a.SetFocus(formView)
+}
+
+func (a *App) settingOpenAITimeout() {
+	formView := form.NewForm("设置 OpenAI 请求超时")
+	speech := a.ctx.GetSpeech()
+	currentValue := ""
+	if speech != nil && speech.RequestTimeoutSeconds > 0 {
+		currentValue = strconv.Itoa(speech.RequestTimeoutSeconds)
+	}
+	tempValue := currentValue
+
+	acceptNumeric := func(text string, lastChar rune) bool {
+		if lastChar == 0 {
+			return true
+		}
+		return lastChar >= '0' && lastChar <= '9'
+	}
+
+	formView.AddInputField("超时(秒)", tempValue, 0, acceptNumeric, func(text string) {
+		tempValue = text
+	})
+
+	formView.AddButton("保存", func() {
+		trimmed := strings.TrimSpace(tempValue)
+		seconds := 0
+		if trimmed != "" {
+			v, err := strconv.Atoi(trimmed)
+			if err != nil {
+				a.showError(fmt.Errorf("请输入合法的非负整数"))
+				return
+			}
+			seconds = v
+		}
+
+		if err := a.updateSpeechConfig(func(cfg *conf.SpeechConfig) {
+			cfg.RequestTimeoutSeconds = seconds
+		}); err != nil {
+			a.showError(err)
+			return
+		}
+		a.mainPages.RemovePage("submenu2")
+		a.refreshSettingsMenu()
+		a.showInfo("OpenAI 请求超时已更新")
+	})
+
+	formView.AddButton("取消", func() {
+		a.mainPages.RemovePage("submenu2")
+	})
+
+	a.mainPages.AddPage("submenu2", formView, true, true)
+	a.SetFocus(formView)
 }
 
 // settingHTTPPort 设置 HTTP 端口
@@ -553,6 +810,7 @@ func (a *App) settingHTTPPort() {
 	formView.AddButton("保存", func() {
 		a.m.SetHTTPAddr(tempHTTPAddr) // 在这里设置HTTP地址
 		a.mainPages.RemovePage("submenu2")
+		a.refreshSettingsMenu()
 		a.showInfo("HTTP 地址已设置为 " + a.ctx.HTTPAddr)
 	})
 
@@ -601,6 +859,7 @@ func (a *App) toggleListen() {
 					if startErr != nil {
 						a.showError(fmt.Errorf("切换失败: %v", startErr))
 					} else {
+						a.refreshSettingsMenu()
 						a.showInfo("已切换监听地址为 " + newAddr)
 					}
 				})
@@ -617,6 +876,7 @@ func (a *App) toggleListen() {
 
 	// 服务未运行，仅更新配置
 	_ = a.m.SetHTTPAddr(newAddr)
+	a.refreshSettingsMenu()
 	a.showInfo("已切换监听地址为 " + newAddr)
 }
 
@@ -637,6 +897,7 @@ func (a *App) settingWorkDir() {
 	formView.AddButton("保存", func() {
 		a.ctx.SetWorkDir(tempWorkDir) // 在这里设置工作目录
 		a.mainPages.RemovePage("submenu2")
+		a.refreshSettingsMenu()
 		a.showInfo("工作目录已设置为 " + a.ctx.WorkDir)
 	})
 
@@ -665,6 +926,7 @@ func (a *App) settingDataKey() {
 	formView.AddButton("保存", func() {
 		a.ctx.DataKey = tempDataKey // 设置数据密钥
 		a.mainPages.RemovePage("submenu2")
+		a.refreshSettingsMenu()
 		a.showInfo("数据密钥已设置")
 	})
 
@@ -689,6 +951,7 @@ func (a *App) settingImgKey() {
 	formView.AddButton("保存", func() {
 		a.ctx.SetImgKey(tempImgKey)
 		a.mainPages.RemovePage("submenu2")
+		a.refreshSettingsMenu()
 		a.showInfo("图片密钥已设置")
 	})
 
@@ -717,6 +980,7 @@ func (a *App) settingDataDir() {
 	formView.AddButton("保存", func() {
 		a.ctx.DataDir = tempDataDir // 设置数据目录
 		a.mainPages.RemovePage("submenu2")
+		a.refreshSettingsMenu()
 		a.showInfo("数据目录已设置为 " + a.ctx.DataDir)
 	})
 
@@ -916,4 +1180,30 @@ func (a *App) showInfo(text string) {
 	a.showModal(text, []string{"OK"}, func(buttonIndex int, buttonLabel string) {
 		a.mainPages.RemovePage("modal")
 	})
+}
+
+func formatPathWithFallback(value, fallback string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return fallback
+	}
+	return trimmed
+}
+
+func formatSecretSummary(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "未设置"
+	}
+	if len(trimmed) <= 6 {
+		return "已设置"
+	}
+	return fmt.Sprintf("已设置(长度 %d)", len(trimmed))
+}
+
+func formatTimeoutSummary(seconds int) string {
+	if seconds <= 0 {
+		return "默认"
+	}
+	return fmt.Sprintf("%d 秒", seconds)
 }
