@@ -3,8 +3,12 @@ GO := go
 ifeq ($(VERSION),)
     VERSION := $(shell git describe --tags --always --dirty="-dev")
 endif
+CGO_EXTRA_LDFLAGS :=
+ifeq ($(OS),Windows_NT)
+	CGO_EXTRA_LDFLAGS := -lgomp
+endif
 LDFLAGS := -ldflags '-X "github.com/sjzar/chatlog/pkg/version.Version=$(VERSION)" -w -s'
-CGO_FLAG := CGO_ENABLED=1
+CGO_FLAG := CGO_ENABLED=1 CGO_CFLAGS="-I$(abspath $(CURDIR)/include)" CGO_LDFLAGS="-L$(abspath $(CURDIR)/library) $(CGO_EXTRA_LDFLAGS)"
 
 PLATFORMS := \
     darwin/amd64 \
@@ -54,7 +58,6 @@ build:
 	@echo "Building for current platform..."
 	@$(MKDIR_BIN)
 	@$(CGO_FLAG) $(GO) build -trimpath $(LDFLAGS) -o bin/$(BINARY_NAME)$(BINARY_SUFFIX) main.go
-	@echo "Done!"
 
 crossbuild: clean
 	@echo "Building for multiple platforms..."
@@ -73,4 +76,3 @@ crossbuild: clean
 			echo "Compressing binary $$output_name..." && upx --best $$output_name; \
 		fi; \
 	done
-	@echo "Done!"

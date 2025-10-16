@@ -72,6 +72,7 @@ func (c *SpeechConfig) Normalize() {
 	c.Organization = strings.TrimSpace(c.Organization)
 	c.Project = strings.TrimSpace(c.Project)
 	c.Proxy = strings.TrimSpace(c.Proxy)
+	c.Model = strings.TrimSpace(c.Model)
 	c.ServiceURL = strings.TrimSpace(c.ServiceURL)
 	c.ServiceOutput = strings.TrimSpace(c.ServiceOutput)
 
@@ -84,6 +85,8 @@ func (c *SpeechConfig) Normalize() {
 			c.ServiceOutput = "json"
 		}
 		c.ServiceOutput = strings.ToLower(c.ServiceOutput)
+	case "whispercpp", "whisper.cpp", "cpp":
+		c.Provider = "whispercpp"
 	default:
 		if c.Provider != "openai" {
 			c.Provider = "openai"
@@ -101,6 +104,7 @@ func (c *SpeechConfig) PrepareForSave() {
 		c.Provider = "openai"
 	}
 
+	c.Model = strings.TrimSpace(c.Model)
 	c.ServiceURL = strings.TrimSpace(c.ServiceURL)
 	c.ServiceOutput = strings.ToLower(strings.TrimSpace(c.ServiceOutput))
 

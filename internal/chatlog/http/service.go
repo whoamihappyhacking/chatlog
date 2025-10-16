@@ -118,6 +118,20 @@ func (s *Service) initSpeech(cfg Config) {
 		s.speechTranscriber = transcriber
 		s.speechOptions = opts
 		log.Info().Str("base_url", speechCfg.ServiceURL).Msg("speech transcription backend initialised via whisper webservice")
+	case "whispercpp", "whisper.cpp", "cpp":
+		modelPath := strings.TrimSpace(speechCfg.Model)
+		transcriber, err := whisper.NewWhisperCPPTranscriber(whisper.WhisperCPPConfig{
+			ModelPath:      modelPath,
+			Threads:        speechCfg.Threads,
+			DefaultOptions: opts,
+		})
+		if err != nil {
+			log.Err(err).Msg("initialise whisper.cpp transcriber failed")
+			return
+		}
+		s.speechTranscriber = transcriber
+		s.speechOptions = opts
+		log.Info().Str("model_path", modelPath).Msg("speech transcription backend initialised via whisper.cpp")
 	default:
 		log.Warn().Str("provider", speechCfg.Provider).Msg("unsupported speech provider; speech transcription disabled")
 	}

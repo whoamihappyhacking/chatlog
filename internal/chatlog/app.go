@@ -42,6 +42,8 @@ const (
 	settingKeyOpenAIBaseURL   settingsKey = "openai_base_url"
 	settingKeyOpenAIProxy     settingsKey = "openai_proxy"
 	settingKeyOpenAITimeout   settingsKey = "openai_timeout"
+	settingKeyWhisperModel    settingsKey = "whisper_model"
+	settingKeyWhisperThreads  settingsKey = "whisper_threads"
 )
 
 type App struct {
@@ -537,17 +539,19 @@ func (a *App) initSettingsTab() {
 
 	a.settingsItems = []*menu.Item{
 		a.newSettingsItem(1, "设置语音服务提供商", settingKeySpeechProvider, a.settingSpeechProvider),
-		a.newSettingsItem(2, "设置本地语音服务地址", settingKeyLocalServiceURL, a.settingLocalServiceURL),
-		a.newSettingsItem(3, "设置 HTTP 服务地址", settingKeyHTTPAddr, a.settingHTTPPort),
-		a.newSettingsItem(4, "切换局域网监听", settingKeyToggleListen, a.toggleListen),
-		a.newSettingsItem(5, "设置工作目录", settingKeyWorkDir, a.settingWorkDir),
-		a.newSettingsItem(6, "设置数据目录", settingKeyDataDir, a.settingDataDir),
-		a.newSettingsItem(7, "设置数据密钥", settingKeyDataKey, a.settingDataKey),
-		a.newSettingsItem(8, "设置图片密钥", settingKeyImgKey, a.settingImgKey),
-		a.newSettingsItem(9, "设置 OpenAI API Key", settingKeyOpenAIAPIKey, a.settingOpenAIAPIKey),
-		a.newSettingsItem(10, "设置 OpenAI Base URL", settingKeyOpenAIBaseURL, a.settingOpenAIBaseURL),
-		a.newSettingsItem(11, "设置 OpenAI 代理", settingKeyOpenAIProxy, a.settingOpenAIProxy),
-		a.newSettingsItem(12, "设置 OpenAI 请求超时", settingKeyOpenAITimeout, a.settingOpenAITimeout),
+		a.newSettingsItem(2, "设置 Whisper.cpp 模型路径", settingKeyWhisperModel, a.settingWhisperModelPath),
+		a.newSettingsItem(3, "设置 Whisper.cpp 线程数", settingKeyWhisperThreads, a.settingWhisperThreads),
+		a.newSettingsItem(4, "设置本地语音服务地址", settingKeyLocalServiceURL, a.settingLocalServiceURL),
+		a.newSettingsItem(5, "设置 HTTP 服务地址", settingKeyHTTPAddr, a.settingHTTPPort),
+		a.newSettingsItem(6, "切换局域网监听", settingKeyToggleListen, a.toggleListen),
+		a.newSettingsItem(7, "设置工作目录", settingKeyWorkDir, a.settingWorkDir),
+		a.newSettingsItem(8, "设置数据目录", settingKeyDataDir, a.settingDataDir),
+		a.newSettingsItem(9, "设置数据密钥", settingKeyDataKey, a.settingDataKey),
+		a.newSettingsItem(10, "设置图片密钥", settingKeyImgKey, a.settingImgKey),
+		a.newSettingsItem(11, "设置 OpenAI API Key", settingKeyOpenAIAPIKey, a.settingOpenAIAPIKey),
+		a.newSettingsItem(12, "设置 OpenAI Base URL", settingKeyOpenAIBaseURL, a.settingOpenAIBaseURL),
+		a.newSettingsItem(13, "设置 OpenAI 代理", settingKeyOpenAIProxy, a.settingOpenAIProxy),
+		a.newSettingsItem(14, "设置 OpenAI 请求超时", settingKeyOpenAITimeout, a.settingOpenAITimeout),
 	}
 
 	a.settingsMenu.SetItems(a.settingsItems)
@@ -587,6 +591,8 @@ func (a *App) refreshSettingsMenu() {
 			isWebService = true
 		case "openai", "":
 			providerLabel = "OpenAI 官方服务"
+		case "whispercpp":
+			providerLabel = "Whisper.cpp 本地模型"
 		default:
 			providerLabel = speechCfg.Provider
 		}
@@ -594,6 +600,31 @@ func (a *App) refreshSettingsMenu() {
 
 	if item := a.settingsItemMap[settingKeySpeechProvider]; item != nil {
 		item.Description = fmt.Sprintf("当前提供商: %s", providerLabel)
+	}
+
+	if item := a.settingsItemMap[settingKeyWhisperModel]; item != nil {
+		current := "未设置"
+		if speechCfg != nil {
+			trimmed := strings.TrimSpace(speechCfg.Model)
+			if trimmed != "" {
+				current = trimmed
+			}
+			if strings.ToLower(strings.TrimSpace(speechCfg.Provider)) != "whispercpp" {
+				current = current + " (当前提供商未启用)"
+			}
+		}
+		item.Description = fmt.Sprintf("当前模型路径: %s", current)
+	}
+
+	if item := a.settingsItemMap[settingKeyWhisperThreads]; item != nil {
+		threadsLabel := "默认"
+		if speechCfg != nil && speechCfg.Threads > 0 {
+			threadsLabel = strconv.Itoa(speechCfg.Threads)
+		}
+		if speechCfg != nil && strings.ToLower(strings.TrimSpace(speechCfg.Provider)) != "whispercpp" {
+			threadsLabel = threadsLabel + " (当前提供商未启用)"
+		}
+		item.Description = fmt.Sprintf("当前线程数: %s", threadsLabel)
 	}
 
 	if item := a.settingsItemMap[settingKeyLocalServiceURL]; item != nil {
@@ -698,7 +729,7 @@ func (a *App) updateSpeechConfig(mutator func(*conf.SpeechConfig)) error {
 }
 
 func (a *App) settingSpeechProvider() {
-	buttons := []string{"OpenAI 官方服务", "本地 Docker Whisper", "取消"}
+	buttons := []string{"OpenAI 官方服务", "本地 Docker Whisper", "Whisper.cpp 本地模型", "取消"}
 	a.showModal("选择语音服务提供商", buttons, func(buttonIndex int, buttonLabel string) {
 		a.mainPages.RemovePage("modal")
 
@@ -714,6 +745,9 @@ func (a *App) settingSpeechProvider() {
 		case "本地 Docker Whisper":
 			provider = "webservice"
 			message = "语音服务已切换到本地 Docker Whisper"
+		case "Whisper.cpp 本地模型":
+			provider = "whispercpp"
+			message = "语音服务已切换到 Whisper.cpp 本地模型"
 		default:
 			return
 		}
@@ -733,6 +767,97 @@ func (a *App) settingSpeechProvider() {
 			a.showInfo(message)
 		}
 	})
+}
+
+func (a *App) settingWhisperModelPath() {
+	formView := form.NewForm("设置 Whisper.cpp 模型路径")
+
+	speech := a.ctx.GetSpeech()
+	currentValue := ""
+	if speech != nil {
+		currentValue = strings.TrimSpace(speech.Model)
+	}
+	tempValue := currentValue
+
+	formView.AddInputField("模型文件路径", tempValue, 0, nil, func(text string) {
+		tempValue = text
+	})
+
+	formView.AddButton("保存", func() {
+		trimmed := strings.TrimSpace(tempValue)
+		if trimmed != "" {
+			trimmed = filepath.Clean(trimmed)
+		}
+
+		if err := a.updateSpeechConfig(func(cfg *conf.SpeechConfig) {
+			cfg.Model = trimmed
+		}); err != nil {
+			a.showError(err)
+			return
+		}
+		a.mainPages.RemovePage("submenu2")
+		a.refreshSettingsMenu()
+		a.showInfo("Whisper.cpp 模型路径已更新")
+	})
+
+	formView.AddButton("取消", func() {
+		a.mainPages.RemovePage("submenu2")
+	})
+
+	a.mainPages.AddPage("submenu2", formView, true, true)
+	a.SetFocus(formView)
+}
+
+func (a *App) settingWhisperThreads() {
+	formView := form.NewForm("设置 Whisper.cpp 线程数")
+
+	speech := a.ctx.GetSpeech()
+	currentValue := ""
+	if speech != nil && speech.Threads > 0 {
+		currentValue = strconv.Itoa(speech.Threads)
+	}
+	tempValue := currentValue
+
+	acceptNumeric := func(text string, lastChar rune) bool {
+		if lastChar == 0 {
+			return true
+		}
+		return lastChar >= '0' && lastChar <= '9'
+	}
+
+	formView.AddInputField("线程数", tempValue, 0, acceptNumeric, func(text string) {
+		tempValue = text
+	})
+
+	formView.AddButton("保存", func() {
+		trimmed := strings.TrimSpace(tempValue)
+		threads := 0
+		if trimmed != "" {
+			v, err := strconv.Atoi(trimmed)
+			if err != nil || v < 0 {
+				a.showError(fmt.Errorf("请输入合法的非负整数"))
+				return
+			}
+			threads = v
+		}
+
+		if err := a.updateSpeechConfig(func(cfg *conf.SpeechConfig) {
+			cfg.Threads = threads
+		}); err != nil {
+			a.showError(err)
+			return
+		}
+		a.mainPages.RemovePage("submenu2")
+		a.refreshSettingsMenu()
+		a.showInfo("Whisper.cpp 线程数已更新")
+	})
+
+	formView.AddButton("取消", func() {
+		a.mainPages.RemovePage("submenu2")
+	})
+
+	a.mainPages.AddPage("submenu2", formView, true, true)
+	a.SetFocus(formView)
 }
 
 func (a *App) settingLocalServiceURL() {
