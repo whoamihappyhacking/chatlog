@@ -17,8 +17,9 @@ import (
 )
 
 type Service struct {
-	conf Config
-	db   *database.Service
+	conf    Config
+	db      *database.Service
+	control Control
 
 	router *gin.Engine
 	server *http.Server
@@ -33,11 +34,32 @@ type Service struct {
 
 type Config interface {
 	GetHTTPAddr() string
+	SetHTTPAddr(string)
 	GetDataDir() string
+	SetDataDir(string)
+	GetWorkDir() string
+	SetWorkDir(string)
+	GetDataKey() string
+	SetDataKey(string)
+	GetImgKey() string
+	SetImgKey(string)
+	IsHTTPEnabled() bool
+	IsAutoDecrypt() bool
 	GetSpeech() *conf.SpeechConfig
 }
 
-func NewService(conf Config, db *database.Service) *Service {
+type Control interface {
+	GetDataKey() error
+	DecryptDBFiles() error
+	StartService() error
+	StopService() error
+	StartAutoDecrypt() error
+	StopAutoDecrypt() error
+	SaveSpeechConfig(cfg *conf.SpeechConfig) error
+	SetHTTPAddr(addr string) error
+}
+
+func NewService(conf Config, db *database.Service, control Control) *Service {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 
@@ -55,9 +77,10 @@ func NewService(conf Config, db *database.Service) *Service {
 	)
 
 	s := &Service{
-		conf:   conf,
-		db:     db,
-		router: router,
+		conf:    conf,
+		db:      db,
+		control: control,
+		router:  router,
 	}
 
 	s.initMCPServer()

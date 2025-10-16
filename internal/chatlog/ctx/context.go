@@ -244,11 +244,23 @@ func (c *Context) GetDataKey() string {
 	return c.DataKey
 }
 
+func (c *Context) GetImgKey() string {
+	return c.ImgKey
+}
+
 func (c *Context) GetHTTPAddr() string {
 	if c.HTTPAddr == "" {
 		c.HTTPAddr = DefalutHTTPAddr
 	}
 	return c.HTTPAddr
+}
+
+func (c *Context) IsHTTPEnabled() bool {
+	return c.HTTPEnabled
+}
+
+func (c *Context) IsAutoDecrypt() bool {
+	return c.AutoDecrypt
 }
 
 func (c *Context) GetWebhook() *conf.Webhook {
@@ -308,6 +320,16 @@ func (c *Context) SetImgKey(key string) {
 		return
 	}
 	c.ImgKey = key
+	c.UpdateConfig()
+}
+
+func (c *Context) SetDataKey(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.DataKey == key {
+		return
+	}
+	c.DataKey = key
 	c.UpdateConfig()
 }
 

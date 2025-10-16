@@ -162,6 +162,7 @@
 				display: inline-flex;
 				align-items: center;
 				justify-content: center;
+				position: relative;
 			}
 
 			button:hover {
@@ -399,6 +400,177 @@
 				color: var(--error-color);
 				font-weight: bold;
 			}
+
+			.settings-grid {
+				display: grid;
+				grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+				gap: 20px;
+			}
+
+			.settings-card {
+				background-color: var(--bg-white);
+				border: 1px solid var(--border-color);
+				border-radius: 12px;
+				padding: 20px;
+				box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+			}
+
+			.settings-card--wide {
+				grid-column: 1 / -1;
+			}
+
+			.settings-card h3 {
+				margin-top: 0;
+				margin-bottom: 12px;
+				color: #2c3e50;
+			}
+
+			.settings-card p {
+				margin-top: 0;
+				color: #555;
+			}
+
+			.settings-buttons {
+				display: flex;
+				gap: 12px;
+				flex-wrap: wrap;
+				margin-top: 12px;
+			}
+
+			.secondary-button {
+				background-color: #7f8c8d;
+			}
+
+			.secondary-button:hover {
+				background-color: #707b7c;
+			}
+
+			.danger-button {
+				background-color: var(--error-color);
+			}
+
+			.danger-button:hover {
+				background-color: #c0392b;
+			}
+
+			.settings-message {
+				display: none;
+				margin-bottom: 16px;
+				padding: 10px 14px;
+				border-radius: 6px;
+				font-weight: 500;
+			}
+
+			.settings-message--info {
+				background-color: rgba(52, 152, 219, 0.1);
+				color: var(--primary-dark);
+				border: 1px solid rgba(52, 152, 219, 0.2);
+			}
+
+			.settings-message--success {
+				background-color: rgba(46, 204, 113, 0.12);
+				color: var(--success-dark);
+				border: 1px solid rgba(46, 204, 113, 0.2);
+			}
+
+			.settings-message--error {
+				background-color: rgba(231, 76, 60, 0.12);
+				color: var(--error-color);
+				border: 1px solid rgba(231, 76, 60, 0.2);
+			}
+
+			.settings-loading {
+				display: none;
+				align-items: center;
+				gap: 8px;
+				color: #666;
+				font-size: 14px;
+				margin-bottom: 12px;
+			}
+
+			.settings-loading::before {
+				content: "";
+				width: 14px;
+				height: 14px;
+				border-radius: 50%;
+				border: 2px solid rgba(0, 0, 0, 0.15);
+				border-top-color: var(--primary-color);
+				animation: settings-spin 0.8s linear infinite;
+			}
+
+			@keyframes settings-spin {
+				to {
+					transform: rotate(360deg);
+				}
+			}
+
+			.status-row {
+				display: flex;
+				justify-content: space-between;
+				align-items: center;
+				padding: 6px 0;
+			}
+
+			.status-badge {
+				display: inline-flex;
+				align-items: center;
+				justify-content: center;
+				padding: 2px 10px;
+				border-radius: 999px;
+				font-size: 12px;
+				font-weight: 600;
+				background-color: #bdc3c7;
+				color: #2c3e50;
+			}
+
+			.status-badge--on {
+				background-color: var(--success-color);
+				color: #fff;
+			}
+
+			.status-badge--off {
+				background-color: #bdc3c7;
+				color: #2c3e50;
+			}
+
+			.settings-actions {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 10px;
+				margin-top: 12px;
+			}
+
+			.settings-actions button {
+				flex: 1 1 180px;
+				min-width: 160px;
+			}
+
+			#settings-speech-json {
+				font-family: "SFMono-Regular", Consolas, "Liberation Mono",
+					Menlo, monospace;
+				font-size: 13px;
+				min-height: 220px;
+				resize: vertical;
+			}
+
+			.button--loading {
+				opacity: 0.6;
+				cursor: wait !important;
+			}
+
+			.button--loading::after {
+				content: "";
+				position: absolute;
+				right: 14px;
+				top: 50%;
+				width: 12px;
+				height: 12px;
+				margin-top: -6px;
+				border-radius: 50%;
+				border: 2px solid rgba(255, 255, 255, 0.6);
+				border-top-color: #fff;
+				animation: settings-spin 0.8s linear infinite;
+			}
 		</style>
 	</head>
 	<body>
@@ -425,6 +597,7 @@
 						<div class="tab" data-tab="chatlog">聊天记录</div>
 						<div class="tab" data-tab="search">搜索</div>
 						<div class="tab" data-tab="diary">日记</div>
+						<div class="tab" data-tab="settings">系统设置</div>
 					</div>
 
 					<!-- 会话查询表单 -->
@@ -802,6 +975,155 @@
 					</div>
 					<div class="error-message" id="error-message"></div>
 				</div>
+
+				<!-- 设置管理 -->
+				<div class="tab-content" id="settings-tab">
+					<div id="settings-message" class="settings-message"></div>
+					<div id="settings-loading" class="settings-loading">
+						正在加载设置...
+					</div>
+					<div class="settings-grid">
+						<div class="settings-card">
+							<h3>基础配置</h3>
+							<div class="form-group">
+								<label for="settings-http-addr"
+									>HTTP 服务地址</label
+								>
+								<input
+									type="text"
+									id="settings-http-addr"
+									placeholder="示例：127.0.0.1:5030"
+									autocomplete="off"
+								/>
+								<div class="form-hint">
+									修改后需重新启动 HTTP 服务才会生效
+								</div>
+							</div>
+							<div class="form-group">
+								<label for="settings-work-dir">工作目录</label>
+								<input
+									type="text"
+									id="settings-work-dir"
+									placeholder="用于存储解密后的数据"
+									autocomplete="off"
+								/>
+							</div>
+							<div class="form-group">
+								<label for="settings-data-dir">数据目录</label>
+								<input
+									type="text"
+									id="settings-data-dir"
+									placeholder="微信数据目录路径"
+									autocomplete="off"
+								/>
+							</div>
+							<div class="form-group">
+								<label for="settings-data-key">数据密钥</label>
+								<input
+									type="password"
+									id="settings-data-key"
+									placeholder="留空则保持不变"
+									autocomplete="new-password"
+								/>
+								<div
+									class="form-hint"
+									id="settings-data-key-hint"
+								>
+									未设置
+								</div>
+							</div>
+							<div class="form-group">
+								<label for="settings-img-key">图片密钥</label>
+								<input
+									type="password"
+									id="settings-img-key"
+									placeholder="留空则保持不变"
+									autocomplete="new-password"
+								/>
+								<div
+									class="form-hint"
+									id="settings-img-key-hint"
+								>
+									未设置
+								</div>
+							</div>
+							<div class="settings-buttons">
+								<button id="settings-save-basic">
+									保存基础配置
+								</button>
+								<button
+									class="secondary-button"
+									id="settings-refresh"
+								>
+									刷新
+								</button>
+							</div>
+						</div>
+
+						<div class="settings-card">
+							<h3>语音配置</h3>
+							<p>
+								直接编辑 Whisper 配置，保存后会写入
+								<code>whisper.json</code>
+							</p>
+							<textarea
+								id="settings-speech-json"
+								spellcheck="false"
+							></textarea>
+							<div class="form-hint">
+								保存前请确认 JSON
+								格式正确，可仅保留需要修改的字段。
+							</div>
+							<div class="settings-buttons">
+								<button id="settings-save-speech">
+									保存语音配置
+								</button>
+							</div>
+						</div>
+
+						<div class="settings-card settings-card--wide">
+							<h3>运行控制</h3>
+							<div class="status-row">
+								<span>HTTP 服务状态</span>
+								<span
+									id="settings-status-http"
+									class="status-badge"
+									>未知</span
+								>
+							</div>
+							<div class="status-row">
+								<span>自动解密</span>
+								<span
+									id="settings-status-auto"
+									class="status-badge"
+									>未知</span
+								>
+							</div>
+							<div class="settings-actions">
+								<button id="settings-action-get-key">
+									重新抓取密钥
+								</button>
+								<button
+									id="settings-action-decrypt"
+									class="secondary-button"
+								>
+									手动解密
+								</button>
+							</div>
+							<div class="settings-actions">
+								<button id="settings-action-start-auto">
+									开启自动解密
+								</button>
+								<button
+									id="settings-action-stop-auto"
+									class="secondary-button"
+								>
+									停止自动解密
+								</button>
+							</div>
+						</div>
+					</div>
+				</div>
 			</div>
 
 			<div class="api-section">
@@ -848,62 +1170,602 @@
 		</div>
 
 		<script>
+			const SETTINGS_TAB = "settings";
+
+			const settingsElements = {
+				tab: document.getElementById("settings-tab"),
+				message: document.getElementById("settings-message"),
+				loading: document.getElementById("settings-loading"),
+				httpAddr: document.getElementById("settings-http-addr"),
+				workDir: document.getElementById("settings-work-dir"),
+				dataDir: document.getElementById("settings-data-dir"),
+				dataKey: document.getElementById("settings-data-key"),
+				dataKeyHint: document.getElementById("settings-data-key-hint"),
+				imgKey: document.getElementById("settings-img-key"),
+				imgKeyHint: document.getElementById("settings-img-key-hint"),
+				speechTextarea: document.getElementById("settings-speech-json"),
+				saveBasicBtn: document.getElementById("settings-save-basic"),
+				refreshBtn: document.getElementById("settings-refresh"),
+				saveSpeechBtn: document.getElementById("settings-save-speech"),
+				httpStatus: document.getElementById("settings-status-http"),
+				autoStatus: document.getElementById("settings-status-auto"),
+				getKeyBtn: document.getElementById("settings-action-get-key"),
+				decryptBtn: document.getElementById("settings-action-decrypt"),
+				startAutoBtn: document.getElementById(
+					"settings-action-start-auto"
+				),
+				stopAutoBtn: document.getElementById(
+					"settings-action-stop-auto"
+				),
+			};
+
+			let currentSettings = null;
+			let settingsLoadedOnce = false;
+			let speechDirty = false;
+
+			function getTrimmedValue(input) {
+				if (!input) {
+					return "";
+				}
+				return input.value.trim();
+			}
+
+			function summariseSecret(value) {
+				if (!value) {
+					return "未设置";
+				}
+				const trimmed = String(value).trim();
+				if (!trimmed) {
+					return "未设置";
+				}
+				if (trimmed.length <= 6) {
+					return "已设置（长度 " + trimmed.length + "）";
+				}
+				return (
+					trimmed.slice(0, 3) +
+					"..." +
+					trimmed.slice(-3) +
+					"（长度 " +
+					trimmed.length +
+					"）"
+				);
+			}
+
+			function clearSettingsMessage() {
+				if (!settingsElements.message) {
+					return;
+				}
+				settingsElements.message.textContent = "";
+				settingsElements.message.className = "settings-message";
+				settingsElements.message.style.display = "none";
+			}
+
+			function showSettingsMessage(type, text) {
+				if (!settingsElements.message) {
+					return;
+				}
+				settingsElements.message.textContent = text;
+				settingsElements.message.className =
+					"settings-message settings-message--" + type;
+				settingsElements.message.style.display = "block";
+			}
+
+			function setSettingsLoading(isLoading) {
+				if (!settingsElements.loading) {
+					return;
+				}
+				settingsElements.loading.style.display = isLoading
+					? "flex"
+					: "none";
+			}
+
+			function updateStatusBadge(element, enabled, labels) {
+				if (!element) {
+					return;
+				}
+				element.classList.remove(
+					"status-badge--on",
+					"status-badge--off"
+				);
+				if (enabled) {
+					element.classList.add("status-badge--on");
+					element.textContent =
+						labels && labels[1] ? labels[1] : "已启动";
+				} else {
+					element.classList.add("status-badge--off");
+					element.textContent =
+						labels && labels[0] ? labels[0] : "未启动";
+				}
+			}
+
+			async function extractErrorMessage(response) {
+				const contentType = response.headers.get("content-type") || "";
+				try {
+					if (contentType.indexOf("application/json") >= 0) {
+						const data = await response.json();
+						if (typeof data === "string") {
+							return data;
+						}
+						if (data && (data.error || data.message)) {
+							return data.error || data.message;
+						}
+						return JSON.stringify(data);
+					}
+					const text = await response.text();
+					return text || "HTTP " + response.status;
+				} catch (err) {
+					return "HTTP " + response.status;
+				}
+			}
+
+			async function fetchJSON(url, options) {
+				const response = await fetch(url, options || {});
+				if (!response.ok) {
+					throw new Error(await extractErrorMessage(response));
+				}
+				const contentType = response.headers.get("content-type") || "";
+				if (
+					response.status === 204 ||
+					contentType.indexOf("application/json") === -1
+				) {
+					return null;
+				}
+				return response.json();
+			}
+
+			function populateSettings(data, options) {
+				const opts = options || {};
+				currentSettings = data
+					? JSON.parse(JSON.stringify(data))
+					: null;
+				if (!currentSettings) {
+					return;
+				}
+
+				if (settingsElements.httpAddr) {
+					settingsElements.httpAddr.value =
+						currentSettings.http_addr || "";
+				}
+				if (settingsElements.workDir) {
+					settingsElements.workDir.value =
+						currentSettings.work_dir || "";
+				}
+				if (settingsElements.dataDir) {
+					settingsElements.dataDir.value =
+						currentSettings.data_dir || "";
+				}
+				if (settingsElements.dataKey) {
+					settingsElements.dataKey.value =
+						currentSettings.data_key || "";
+				}
+				if (settingsElements.dataKeyHint) {
+					settingsElements.dataKeyHint.textContent = summariseSecret(
+						currentSettings.data_key
+					);
+				}
+				if (settingsElements.imgKey) {
+					settingsElements.imgKey.value =
+						currentSettings.img_key || "";
+				}
+				if (settingsElements.imgKeyHint) {
+					settingsElements.imgKeyHint.textContent = summariseSecret(
+						currentSettings.img_key
+					);
+				}
+				if (settingsElements.httpStatus) {
+					updateStatusBadge(
+						settingsElements.httpStatus,
+						Boolean(currentSettings.http_enabled)
+					);
+				}
+				if (settingsElements.autoStatus) {
+					updateStatusBadge(
+						settingsElements.autoStatus,
+						Boolean(currentSettings.auto_decrypt),
+						["未开启", "已开启"]
+					);
+				}
+				if (settingsElements.startHttpBtn) {
+					settingsElements.startHttpBtn.disabled = Boolean(
+						currentSettings.http_enabled
+					);
+				}
+				if (settingsElements.stopHttpBtn) {
+					settingsElements.stopHttpBtn.disabled = !Boolean(
+						currentSettings.http_enabled
+					);
+				}
+				if (settingsElements.startAutoBtn) {
+					settingsElements.startAutoBtn.disabled = Boolean(
+						currentSettings.auto_decrypt
+					);
+				}
+				if (settingsElements.stopAutoBtn) {
+					settingsElements.stopAutoBtn.disabled = !Boolean(
+						currentSettings.auto_decrypt
+					);
+				}
+
+				var speechConfig = currentSettings.speech || {};
+				if (settingsElements.speechTextarea) {
+					var shouldOverwrite = opts.overwriteSpeech;
+					if (shouldOverwrite === undefined) {
+						shouldOverwrite = !speechDirty;
+					}
+					if (shouldOverwrite) {
+						settingsElements.speechTextarea.value = JSON.stringify(
+							speechConfig,
+							null,
+							2
+						);
+						speechDirty = false;
+					}
+				}
+
+				settingsLoadedOnce = true;
+			}
+
+			function valuesEqual(a, b) {
+				return (
+					(a === undefined ? "" : a) === (b === undefined ? "" : b)
+				);
+			}
+
+			async function loadSettings(options) {
+				if (!settingsElements.tab) {
+					return;
+				}
+				var opts = options || {};
+				if (!opts.silent) {
+					clearSettingsMessage();
+				}
+				setSettingsLoading(true);
+				try {
+					const data = await fetchJSON("/api/v1/setting");
+					if (data) {
+						populateSettings(data, {
+							overwriteSpeech: opts.forceSpeech || !speechDirty,
+						});
+						if (!opts.silent) {
+							showSettingsMessage("success", "设置已刷新");
+						}
+					}
+				} catch (err) {
+					showSettingsMessage(
+						"error",
+						"加载设置失败：" + err.message
+					);
+				} finally {
+					setSettingsLoading(false);
+				}
+			}
+
+			async function submitSettingsUpdate(
+				payload,
+				successText,
+				overwriteSpeech
+			) {
+				if (!payload || Object.keys(payload).length === 0) {
+					showSettingsMessage("info", "未检测到需要保存的更改");
+					return;
+				}
+				setSettingsLoading(true);
+				try {
+					const data = await fetchJSON("/api/v1/setting", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify(payload),
+					});
+					if (data) {
+						populateSettings(data, {
+							overwriteSpeech: overwriteSpeech,
+						});
+					}
+					showSettingsMessage("success", successText || "设置已更新");
+				} catch (err) {
+					showSettingsMessage("error", "保存失败：" + err.message);
+				} finally {
+					setSettingsLoading(false);
+				}
+			}
+
+			async function saveBasicSettings() {
+				if (!currentSettings) {
+					await loadSettings({ silent: true, forceSpeech: true });
+				}
+				var payload = {};
+				var httpAddr = getTrimmedValue(settingsElements.httpAddr);
+				var workDir = getTrimmedValue(settingsElements.workDir);
+				var dataDir = getTrimmedValue(settingsElements.dataDir);
+				var dataKey = getTrimmedValue(settingsElements.dataKey);
+				var imgKey = getTrimmedValue(settingsElements.imgKey);
+
+				var currentHttp = currentSettings
+					? currentSettings.http_addr || ""
+					: "";
+				var currentWork = currentSettings
+					? currentSettings.work_dir || ""
+					: "";
+				var currentData = currentSettings
+					? currentSettings.data_dir || ""
+					: "";
+				var currentDataKey = currentSettings
+					? currentSettings.data_key || ""
+					: "";
+				var currentImgKey = currentSettings
+					? currentSettings.img_key || ""
+					: "";
+
+				if (!valuesEqual(currentHttp, httpAddr)) {
+					payload.http_addr = httpAddr;
+				}
+				if (!valuesEqual(currentWork, workDir)) {
+					payload.work_dir = workDir;
+				}
+				if (!valuesEqual(currentData, dataDir)) {
+					payload.data_dir = dataDir;
+				}
+				if (!valuesEqual(currentDataKey, dataKey)) {
+					payload.data_key = dataKey;
+				}
+				if (!valuesEqual(currentImgKey, imgKey)) {
+					payload.img_key = imgKey;
+				}
+
+				await submitSettingsUpdate(payload, "基础配置已保存", false);
+			}
+
+			async function saveSpeechSettings() {
+				if (!settingsElements.speechTextarea) {
+					return;
+				}
+				var raw = settingsElements.speechTextarea.value.trim();
+				if (!raw) {
+					showSettingsMessage("error", "请输入有效的 JSON 配置");
+					return;
+				}
+				var parsed;
+				try {
+					parsed = JSON.parse(raw);
+				} catch (err) {
+					showSettingsMessage(
+						"error",
+						"JSON 解析失败：" + err.message
+					);
+					return;
+				}
+				speechDirty = false;
+				await submitSettingsUpdate(
+					{ speech: parsed },
+					"语音配置已保存",
+					true
+				);
+			}
+
+			async function callSettingAction(endpoint, options) {
+				var opts = options || {};
+				if (!endpoint) {
+					return;
+				}
+				if (
+					opts.confirmMessage &&
+					!window.confirm(opts.confirmMessage)
+				) {
+					return;
+				}
+				clearSettingsMessage();
+				if (opts.button) {
+					opts.button.disabled = true;
+					opts.button.classList.add("button--loading");
+				}
+				try {
+					const response = await fetch(endpoint, { method: "POST" });
+					if (!response.ok) {
+						throw new Error(await extractErrorMessage(response));
+					}
+					try {
+						await response.json();
+					} catch (err) {
+						// ignore non-json body
+					}
+					showSettingsMessage(
+						"success",
+						opts.successMessage || "操作已完成"
+					);
+					if (opts.refresh === undefined || opts.refresh) {
+						await loadSettings({
+							silent: true,
+							forceSpeech: false,
+						});
+					}
+				} catch (err) {
+					showSettingsMessage("error", "操作失败：" + err.message);
+				} finally {
+					if (opts.button) {
+						opts.button.disabled = false;
+						opts.button.classList.remove("button--loading");
+					}
+				}
+			}
+
+			if (settingsElements.saveBasicBtn) {
+				settingsElements.saveBasicBtn.addEventListener(
+					"click",
+					saveBasicSettings
+				);
+			}
+			if (settingsElements.refreshBtn) {
+				settingsElements.refreshBtn.addEventListener(
+					"click",
+					function () {
+						loadSettings({ silent: false, forceSpeech: false });
+					}
+				);
+			}
+			if (settingsElements.saveSpeechBtn) {
+				settingsElements.saveSpeechBtn.addEventListener(
+					"click",
+					saveSpeechSettings
+				);
+			}
+			if (settingsElements.speechTextarea) {
+				settingsElements.speechTextarea.addEventListener(
+					"input",
+					function () {
+						speechDirty = true;
+					}
+				);
+			}
+			if (settingsElements.getKeyBtn) {
+				settingsElements.getKeyBtn.addEventListener(
+					"click",
+					function (event) {
+						callSettingAction("/api/v1/actions/get-data-key", {
+							button: event.currentTarget,
+							successMessage: "已请求获取密钥，请稍后刷新设置。",
+						});
+					}
+				);
+			}
+			if (settingsElements.decryptBtn) {
+				settingsElements.decryptBtn.addEventListener(
+					"click",
+					function (event) {
+						callSettingAction("/api/v1/actions/decrypt", {
+							button: event.currentTarget,
+							confirmMessage: "确定立即执行手动解密吗？",
+							successMessage: "已触发手动解密任务。",
+						});
+					}
+				);
+			}
+			if (settingsElements.startAutoBtn) {
+				settingsElements.startAutoBtn.addEventListener(
+					"click",
+					function (event) {
+						callSettingAction(
+							"/api/v1/actions/auto-decrypt/start",
+							{
+								button: event.currentTarget,
+								successMessage: "已开启自动解密。",
+							}
+						);
+					}
+				);
+			}
+			if (settingsElements.stopAutoBtn) {
+				settingsElements.stopAutoBtn.addEventListener(
+					"click",
+					function (event) {
+						callSettingAction("/api/v1/actions/auto-decrypt/stop", {
+							button: event.currentTarget,
+							successMessage: "已关闭自动解密。",
+						});
+					}
+				);
+			}
+
+			loadSettings({ silent: true, forceSpeech: true });
+
+			let currentActiveTab = "session";
+			const initialTab = document.querySelector(".tab.active");
+			if (initialTab && initialTab.getAttribute("data-tab")) {
+				currentActiveTab = initialTab.getAttribute("data-tab");
+			}
+
+			const testApiButton = document.getElementById("test-api");
+			const apiResultContainer = document.getElementById("api-result");
+			const resultWrapper = document.getElementById("result-wrapper");
+			const requestUrlElement = document.getElementById("request-url");
+			const errorMessageElement =
+				document.getElementById("error-message");
+			const copyResultButton = document.getElementById("copy-result");
+			const copyUrlButton = document.getElementById("copy-url");
+
 			// 标签切换功能
 			document.querySelectorAll(".tab").forEach((tab) => {
 				tab.addEventListener("click", function () {
-					// 移除所有标签的活动状态
+					const newTab = this.getAttribute("data-tab");
+					const previousTab = currentActiveTab;
+					currentActiveTab = newTab;
+
 					document
 						.querySelectorAll(".tab")
 						.forEach((t) => t.classList.remove("active"));
-					// 设置当前标签为活动状态
 					this.classList.add("active");
 
-					// 隐藏所有内容区域
 					document
 						.querySelectorAll(".tab-content")
 						.forEach((content) => {
 							content.classList.remove("active");
 						});
 
-					// 显示当前标签对应的内容
-					const tabId = this.getAttribute("data-tab") + "-tab";
-					document.getElementById(tabId).classList.add("active");
+					const tabId = newTab + "-tab";
+					const target = document.getElementById(tabId);
+					if (target) {
+						target.classList.add("active");
+					}
 
-					// 清空结果区域
-					document.getElementById("result-wrapper").style.display =
-						"none";
-					document.getElementById("api-result").innerHTML =
-						"<p>查询结果将显示在这里...</p>";
-					document.getElementById("request-url").textContent = "";
-					document.getElementById("error-message").style.display =
-						"none";
-					document.getElementById("error-message").textContent = "";
+					if (resultWrapper) {
+						resultWrapper.style.display = "none";
+					}
+					if (apiResultContainer) {
+						apiResultContainer.innerHTML =
+							"<p>查询结果将显示在这里...</p>";
+					}
+					if (requestUrlElement) {
+						requestUrlElement.textContent = "";
+					}
+					if (errorMessageElement) {
+						errorMessageElement.style.display = "none";
+						errorMessageElement.textContent = "";
+					}
+
+					const isSettings = newTab === SETTINGS_TAB;
+					if (testApiButton) {
+						testApiButton.style.display = isSettings
+							? "none"
+							: "inline-flex";
+					}
+					if (isSettings) {
+						loadSettings({
+							silent: previousTab === SETTINGS_TAB,
+							forceSpeech: false,
+						});
+					} else if (previousTab === SETTINGS_TAB) {
+						clearSettingsMessage();
+						setSettingsLoading(false);
+					}
 				});
 			});
 
 			// API 测试功能
-			document
-				.getElementById("test-api")
-				.addEventListener("click", async function () {
-					const resultContainer =
-						document.getElementById("api-result");
-					const requestUrlContainer =
-						document.getElementById("request-url");
-					const errorMessage =
-						document.getElementById("error-message");
-					const resultWrapper =
-						document.getElementById("result-wrapper");
+			if (testApiButton) {
+				testApiButton.addEventListener("click", async function () {
+					if (currentActiveTab === SETTINGS_TAB) {
+						if (errorMessageElement) {
+							errorMessageElement.textContent =
+								"请在“系统设置”标签页使用上方的设置表单";
+							errorMessageElement.style.display = "block";
+						}
+						return;
+					}
 
-					errorMessage.style.display = "none";
-					errorMessage.textContent = "";
+					const resultContainer = apiResultContainer;
+					const requestUrlContainer = requestUrlElement;
+					const errorMessage = errorMessageElement;
+					const wrapper = resultWrapper;
+
+					if (errorMessage) {
+						errorMessage.style.display = "none";
+						errorMessage.textContent = "";
+					}
 
 					let highlightTerms = [];
 					let responseFormat = "";
 
 					try {
-						const activeTab = document
-							.querySelector(".tab.active")
-							.getAttribute("data-tab");
+						const activeTab = currentActiveTab;
 						let url = "/api/v1/";
 						const params = new URLSearchParams();
 
@@ -1167,10 +2029,16 @@
 							? `${url}?${params.toString()}`
 							: url;
 						const fullUrl = window.location.origin + apiUrl;
-						requestUrlContainer.textContent = fullUrl;
-						resultWrapper.style.display = "block";
-						resultContainer.innerHTML =
-							'<div class="loading">加载中</div>';
+						if (requestUrlContainer) {
+							requestUrlContainer.textContent = fullUrl;
+						}
+						if (wrapper) {
+							wrapper.style.display = "block";
+						}
+						if (resultContainer) {
+							resultContainer.innerHTML =
+								'<div class="loading">加载中</div>';
+						}
 
 						const response = await fetch(apiUrl);
 						if (!response.ok) {
@@ -1188,33 +2056,44 @@
 								text,
 								highlightTerms
 							);
-							resultContainer.innerHTML = `<pre class="result-block">${highlighted}</pre>`;
+							if (resultContainer) {
+								resultContainer.innerHTML = `<pre class="result-block">${highlighted}</pre>`;
+							}
 						} else {
 							const textResult = await response.text();
 							const expectsHtml =
 								(responseFormat || "").toLowerCase() ===
 									"html" || contentType.includes("text/html");
 							if (expectsHtml) {
-								resultContainer.innerHTML = textResult;
-								highlightHtmlContent(
-									resultContainer,
-									highlightTerms
-								);
+								if (resultContainer) {
+									resultContainer.innerHTML = textResult;
+									highlightHtmlContent(
+										resultContainer,
+										highlightTerms
+									);
+								}
 							} else {
 								const highlighted = highlightPlainText(
 									textResult,
 									highlightTerms
 								);
-								resultContainer.innerHTML = `<pre class="result-block">${highlighted}</pre>`;
+								if (resultContainer) {
+									resultContainer.innerHTML = `<pre class="result-block">${highlighted}</pre>`;
+								}
 							}
 						}
 					} catch (error) {
-						resultContainer.innerHTML = "";
-						errorMessage.textContent = `查询出错: ${error.message}`;
-						errorMessage.style.display = "block";
+						if (resultContainer) {
+							resultContainer.innerHTML = "";
+						}
+						if (errorMessage) {
+							errorMessage.textContent = `查询出错: ${error.message}`;
+							errorMessage.style.display = "block";
+						}
 						console.error("API查询出错:", error);
 					}
 				});
+			}
 
 			function escapeHtml(str) {
 				if (str == null) return "";
@@ -1438,23 +2317,29 @@
 			})();
 
 			// 复制结果功能
-			document
-				.getElementById("copy-result")
-				.addEventListener("click", function () {
-					const resultText =
-						document.getElementById("api-result").innerText;
-					copyToClipboard(resultText, this, "已复制结果!");
+			if (copyResultButton) {
+				copyResultButton.addEventListener("click", function () {
+					const resultText = apiResultContainer
+						? apiResultContainer.innerText
+						: "";
+					copyToClipboard(
+						resultText,
+						copyResultButton,
+						"已复制结果!"
+					);
 				});
+			}
 
 			// 复制URL功能
-			document
-				.getElementById("copy-url")
-				.addEventListener("click", function () {
+			if (copyUrlButton) {
+				copyUrlButton.addEventListener("click", function () {
 					// 获取完整URL（包含域名部分）
-					const urlText =
-						document.getElementById("request-url").innerText;
-					copyToClipboard(urlText, this, "已复制URL!");
+					const urlText = requestUrlElement
+						? requestUrlElement.innerText
+						: "";
+					copyToClipboard(urlText, copyUrlButton, "已复制URL!");
 				});
+			}
 
 			// 通用复制功能（支持非安全上下文的回退方案）
 			function copyToClipboard(text, button, successMessage) {

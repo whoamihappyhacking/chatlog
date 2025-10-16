@@ -14,7 +14,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var Debug bool
+var (
+	Debug   bool
+	Console bool
+)
 
 func initLog(cmd *cobra.Command, args []string) {
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)

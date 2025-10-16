@@ -62,10 +62,17 @@ go install github.com/sjzar/chatlog@latest
 
 ### Terminal UI 模式
 
-最简单的使用方式是通过 Terminal UI 界面操作：
+最简单的使用方式是通过 web 界面操作：
 
 ```bash
 chatlog
+```
+
+如果遇到了问题，可以按下面的命令打开调试/控制台前端模式：
+
+```bash
+chatlog --debug  // 打开调试模式
+chatlog --console // 打开控制台前端模式
 ```
 
 操作方法：

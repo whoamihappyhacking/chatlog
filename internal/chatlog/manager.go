@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -22,6 +24,19 @@ import (
 
 const initialDecryptPollInterval = 5 * time.Second
 
+type RunMode int
+
+const (
+	RunModeHeadless RunMode = iota
+	RunModeConsole
+)
+
+type RunOptions struct {
+	Mode               RunMode
+	AutoOpenBrowser    bool
+	AutoOpenBrowserSet bool
+}
+
 // Manager 管理聊天日志应用
 type Manager struct {
 	ctx *ctx.Context
@@ -36,13 +51,32 @@ type Manager struct {
 	// Terminal UI
 	app *App
 
+	options RunOptions
+
 	initialDecryptOnce    sync.Once
 	initialDecryptMu      sync.Mutex
 	initialDecryptLastErr string
 }
 
 func New() *Manager {
-	return &Manager{}
+	return &Manager{
+		options: RunOptions{
+			Mode:               RunModeHeadless,
+			AutoOpenBrowser:    true,
+			AutoOpenBrowserSet: true,
+		},
+	}
+}
+
+func (m *Manager) SetRunOptions(opts RunOptions) {
+	if opts.Mode != RunModeConsole {
+		opts.Mode = RunModeHeadless
+	}
+	if !opts.AutoOpenBrowserSet {
+		opts.AutoOpenBrowser = m.options.AutoOpenBrowser
+		opts.AutoOpenBrowserSet = m.options.AutoOpenBrowserSet
+	}
+	m.options = opts
 }
 
 func (m *Manager) Run(configPath string) error {
@@ -57,7 +91,7 @@ func (m *Manager) Run(configPath string) error {
 
 	m.db = database.NewService(m.ctx)
 
-	m.http = http.NewService(m.ctx, m.db)
+	m.http = http.NewService(m.ctx, m.db, m)
 
 	instances := m.wechat.GetWeChatInstances()
 	m.ctx.SetWeChatInstances(instances)
@@ -67,16 +101,74 @@ func (m *Manager) Run(configPath string) error {
 
 	m.startInitialDecryptWatcher()
 
-	if m.ctx.HTTPEnabled {
-		// 启动HTTP服务
+	wantHTTP := m.ctx.HTTPEnabled || m.options.Mode == RunModeHeadless
+	if wantHTTP {
 		if err := m.StartService(); err != nil {
-			m.StopService()
+			m.stopService()
+			if m.options.Mode == RunModeHeadless {
+				return err
+			}
+			log.Err(err).Msg("failed to start HTTP service")
 		}
 	}
-	// 启动终端UI
-	m.app = NewApp(m.ctx, m)
-	m.app.Run() // 阻塞
+
+	if m.options.Mode == RunModeConsole {
+		m.app = NewApp(m.ctx, m)
+		return m.app.Run()
+	}
+
+	if url := m.webInterfaceURL(); url != "" {
+		log.Info().Str("url", url).Msg("Chatlog web interface available")
+		if m.options.AutoOpenBrowser {
+			m.launchBrowser(url)
+		}
+	}
+
+	log.Info().Msg("Chatlog is running in headless mode. Press Ctrl+C to exit.")
+	m.waitForShutdown()
 	return nil
+}
+
+func (m *Manager) webInterfaceURL() string {
+	if m.ctx == nil {
+		return ""
+	}
+	addr := strings.TrimSpace(m.ctx.GetHTTPAddr())
+	if addr == "" {
+		return ""
+	}
+	return util.ComposeLANURL(addr)
+}
+
+func (m *Manager) launchBrowser(url string) {
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		log.Debug().Str("url", url).Msg("launching default browser")
+		if err := util.OpenBrowser(url); err != nil {
+			log.Warn().Err(err).Str("url", url).Msg("failed to open browser")
+		}
+	}()
+}
+
+func (m *Manager) waitForShutdown() {
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
+	sig := <-sigCh
+	log.Info().Msgf("received signal %s, shutting down", sig)
+
+	if m.wechat != nil && m.ctx != nil && m.ctx.IsAutoDecrypt() {
+		if err := m.wechat.StopAutoDecrypt(); err != nil {
+			log.Warn().Err(err).Msg("failed to stop auto decrypt during shutdown")
+		}
+	}
+
+	if err := m.stopService(); err != nil {
+		log.Warn().Err(err).Msg("failed to stop services during shutdown")
+	}
+
+	log.Info().Msg("Shutdown complete")
 }
 
 func (m *Manager) startInitialDecryptWatcher() {
@@ -260,7 +352,11 @@ func (m *Manager) SetHTTPAddr(text string) error {
 	} else {
 		addr = text
 	}
-	m.ctx.SetHTTPAddr(addr)
+	if m.ctx != nil {
+		m.ctx.SetHTTPAddr(addr)
+	} else if m.sc != nil {
+		m.sc.SetHTTPAddr(addr)
+	}
 	return nil
 }
 
@@ -476,7 +572,7 @@ func (m *Manager) CommandHTTPServer(configPath string, cmdConf map[string]any) e
 
 	m.db = database.NewService(m.sc)
 
-	m.http = http.NewService(m.sc, m.db)
+	m.http = http.NewService(m.sc, m.db, m)
 
 	if m.sc.GetAutoDecrypt() {
 		if err := m.wechat.StartAutoDecrypt(); err != nil {

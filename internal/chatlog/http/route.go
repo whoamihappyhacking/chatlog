@@ -162,15 +162,27 @@ func (s *Service) initMediaRouter() {
 }
 
 func (s *Service) initAPIRouter() {
-	api := s.router.Group("/api/v1", s.checkDBStateMiddleware())
+	api := s.router.Group("/api/v1")
 	{
-		api.GET("/chatlog", s.handleChatlog)
-		api.GET("/contact", s.handleContacts)
-		api.GET("/chatroom", s.handleChatRooms)
-		api.GET("/session", s.handleSessions)
-		api.GET("/diary", s.handleDiary)
-		api.GET("/dashboard", s.handleDashboard)
-		api.GET("/search", s.handleSearch)
+		api.GET("/setting", s.handleGetSetting)
+		api.POST("/setting", s.handleUpdateSetting)
+
+		actions := api.Group("/actions")
+		actions.POST("/get-data-key", s.handleActionGetDataKey)
+		actions.POST("/decrypt", s.handleActionDecrypt)
+		actions.POST("/http/start", s.handleActionStartHTTP)
+		actions.POST("/http/stop", s.handleActionStopHTTP)
+		actions.POST("/auto-decrypt/start", s.handleActionStartAutoDecrypt)
+		actions.POST("/auto-decrypt/stop", s.handleActionStopAutoDecrypt)
+
+		dataAPI := api.Group("", s.checkDBStateMiddleware())
+		dataAPI.GET("/chatlog", s.handleChatlog)
+		dataAPI.GET("/contact", s.handleContacts)
+		dataAPI.GET("/chatroom", s.handleChatRooms)
+		dataAPI.GET("/session", s.handleSessions)
+		dataAPI.GET("/diary", s.handleDiary)
+		dataAPI.GET("/dashboard", s.handleDashboard)
+		dataAPI.GET("/search", s.handleSearch)
 	}
 }
 

@@ -63,3 +63,31 @@ func (c *ServerConfig) GetWebhook() *Webhook {
 func (c *ServerConfig) GetSpeech() *SpeechConfig {
 	return c.Speech
 }
+
+func (c *ServerConfig) SetHTTPAddr(addr string) {
+	c.HTTPAddr = addr
+}
+
+func (c *ServerConfig) SetWorkDir(dir string) {
+	c.WorkDir = dir
+}
+
+func (c *ServerConfig) SetDataDir(dir string) {
+	c.DataDir = dir
+}
+
+func (c *ServerConfig) SetImgKey(key string) {
+	c.ImgKey = key
+}
+
+func (c *ServerConfig) SetDataKey(key string) {
+	c.DataKey = key
+}
+
+func (c *ServerConfig) IsHTTPEnabled() bool {
+	return true
+}
+
+func (c *ServerConfig) IsAutoDecrypt() bool {
+	return c.AutoDecrypt
+}
