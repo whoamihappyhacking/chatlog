@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -16,6 +17,7 @@ import (
 	"github.com/sjzar/chatlog/internal/chatlog/database"
 	"github.com/sjzar/chatlog/internal/chatlog/http"
 	"github.com/sjzar/chatlog/internal/chatlog/wechat"
+	"github.com/sjzar/chatlog/internal/tray"
 	iwechat "github.com/sjzar/chatlog/internal/wechat"
 	"github.com/sjzar/chatlog/pkg/config"
 	"github.com/sjzar/chatlog/pkg/util"
@@ -49,13 +51,18 @@ type Manager struct {
 	wechat *wechat.Service
 
 	// Terminal UI
-	app *App
+	app      *App
+	trayCtrl tray.Controller
 
 	options RunOptions
 
 	initialDecryptOnce    sync.Once
 	initialDecryptMu      sync.Mutex
 	initialDecryptLastErr string
+
+	shutdownCh     chan struct{}
+	shutdownOnce   sync.Once
+	shutdownReason string
 }
 
 func New() *Manager {
@@ -65,6 +72,7 @@ func New() *Manager {
 			AutoOpenBrowser:    true,
 			AutoOpenBrowserSet: true,
 		},
+		shutdownCh: make(chan struct{}),
 	}
 }
 
@@ -124,6 +132,25 @@ func (m *Manager) Run(configPath string) error {
 		}
 	}
 
+	if runtime.GOOS == "windows" {
+		ctrl, err := tray.Start(tray.Options{
+			Tooltip: "Chatlog",
+			OnOpen: func() {
+				if next := m.webInterfaceURL(); next != "" {
+					m.launchBrowser(next)
+				}
+			},
+			OnQuit: func() {
+				m.requestShutdown("tray menu exit")
+			},
+		})
+		if err != nil {
+			log.Warn().Err(err).Msg("failed to start system tray icon")
+		} else {
+			m.trayCtrl = ctrl
+		}
+	}
+
 	log.Info().Msg("Chatlog is running in headless mode. Press Ctrl+C to exit.")
 	m.waitForShutdown()
 	return nil
@@ -141,6 +168,9 @@ func (m *Manager) webInterfaceURL() string {
 }
 
 func (m *Manager) launchBrowser(url string) {
+	if strings.TrimSpace(url) == "" {
+		return
+	}
 	go func() {
 		time.Sleep(500 * time.Millisecond)
 		log.Debug().Str("url", url).Msg("launching default browser")
@@ -155,8 +185,19 @@ func (m *Manager) waitForShutdown() {
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
 
-	sig := <-sigCh
-	log.Info().Msgf("received signal %s, shutting down", sig)
+	var reason string
+	select {
+	case sig := <-sigCh:
+		reason = fmt.Sprintf("received signal %s", sig)
+	case <-m.shutdownCh:
+		reason = m.shutdownReason
+		if reason == "" {
+			reason = "shutdown requested"
+		}
+	}
+
+	log.Info().Msgf("%s, shutting down", reason)
+	m.stopTray()
 
 	if m.wechat != nil && m.ctx != nil && m.ctx.IsAutoDecrypt() {
 		if err := m.wechat.StopAutoDecrypt(); err != nil {
@@ -169,6 +210,21 @@ func (m *Manager) waitForShutdown() {
 	}
 
 	log.Info().Msg("Shutdown complete")
+}
+
+func (m *Manager) requestShutdown(reason string) {
+	m.shutdownOnce.Do(func() {
+		m.shutdownReason = reason
+		close(m.shutdownCh)
+	})
+}
+
+func (m *Manager) stopTray() {
+	if m.trayCtrl == nil {
+		return
+	}
+	m.trayCtrl.Stop()
+	m.trayCtrl = nil
 }
 
 func (m *Manager) startInitialDecryptWatcher() {

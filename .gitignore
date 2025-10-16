@@ -24,11 +24,11 @@ go.work.sum
 # env file
 .env
 
+# icon file
+*.ico
+
 # syncthing files
 .stfolder
-
-chatlog.exe# Added by goreleaser init:
-dist/
 
 # Nightly python remake
 tools/
