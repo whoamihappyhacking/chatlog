@@ -6,9 +6,11 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -18,6 +20,7 @@ import (
 	"github.com/sjzar/chatlog/internal/errors"
 	"github.com/sjzar/chatlog/internal/model"
 	"github.com/sjzar/chatlog/internal/wechatdb/datasource/dbm"
+	"github.com/sjzar/chatlog/internal/wechatdb/msgstore"
 	"github.com/sjzar/chatlog/pkg/util"
 )
 
@@ -75,14 +78,22 @@ type DataSource struct {
 
 	// 消息数据库信息
 	messageInfos []MessageDBInfo
+
+	talkerDBMap        map[string]string
+	messageStores      []*msgstore.Store
+	messageStoreByPath map[string]*msgstore.Store
+	messageStoreMu     sync.RWMutex
 }
 
 func New(path string) (*DataSource, error) {
 
 	ds := &DataSource{
-		path:         path,
-		dbm:          dbm.NewDBManager(path),
-		messageInfos: make([]MessageDBInfo, 0),
+		path:               path,
+		dbm:                dbm.NewDBManager(path),
+		messageInfos:       make([]MessageDBInfo, 0),
+		talkerDBMap:        make(map[string]string),
+		messageStores:      make([]*msgstore.Store, 0),
+		messageStoreByPath: make(map[string]*msgstore.Store),
 	}
 
 	for _, g := range Groups {
@@ -117,6 +128,53 @@ func (ds *DataSource) SetCallback(group string, callback func(event fsnotify.Eve
 	return ds.dbm.AddCallback(group, callback)
 }
 
+func (ds *DataSource) ListMessageStores(ctx context.Context) ([]*msgstore.Store, error) {
+	_ = ctx
+
+	ds.messageStoreMu.RLock()
+	defer ds.messageStoreMu.RUnlock()
+
+	stores := make([]*msgstore.Store, len(ds.messageStores))
+	for i, store := range ds.messageStores {
+		stores[i] = store.Clone()
+	}
+	return stores, nil
+}
+
+func (ds *DataSource) LocateMessageStore(msg *model.Message) (*msgstore.Store, error) {
+	if msg == nil {
+		return nil, errors.MessageStoreNotFound("nil message")
+	}
+
+	talker := strings.TrimSpace(msg.Talker)
+	ds.messageStoreMu.RLock()
+	defer ds.messageStoreMu.RUnlock()
+
+	if talker != "" {
+		hash := md5.Sum([]byte(talker))
+		key := hex.EncodeToString(hash[:])
+		if path, ok := ds.talkerDBMap[key]; ok {
+			if store, exists := ds.messageStoreByPath[path]; exists {
+				return store, nil
+			}
+		}
+	}
+
+	ts := msg.Time
+	if !ts.IsZero() {
+		for _, store := range ds.messageStores {
+			if (ts.Equal(store.StartTime) || ts.After(store.StartTime)) && ts.Before(store.EndTime) {
+				return store, nil
+			}
+		}
+	}
+
+	if talker == "" {
+		talker = "unknown"
+	}
+	return nil, errors.MessageStoreNotFound(talker)
+}
+
 func (ds *DataSource) initMessageDbs() error {
 	dbPaths, err := ds.dbm.GetDBPath(Message)
 	if err != nil {
@@ -129,12 +187,17 @@ func (ds *DataSource) initMessageDbs() error {
 
 	// 处理每个数据库文件
 	infos := make([]MessageDBInfo, 0)
+	talkerDBMap := make(map[string]string)
+	talkerSets := make(map[string]map[string]struct{})
 	for _, filePath := range dbPaths {
 		db, err := ds.dbm.OpenDB(filePath)
 		if err != nil {
 			log.Err(err).Msgf("获取数据库 %s 失败", filePath)
 			continue
 		}
+
+		talkers := make(map[string]struct{})
+		talkerSets[filePath] = talkers
 
 		// 获取 Timestamp 表中的开始时间
 		var startTime time.Time
@@ -146,6 +209,27 @@ func (ds *DataSource) initMessageDbs() error {
 			continue
 		}
 		startTime = time.Unix(timestamp, 0)
+
+		rows, err := db.Query("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%'")
+		if err != nil {
+			log.Debug().Err(err).Msgf("数据库 %s 查询 Msg 表失败", filePath)
+		} else {
+			for rows.Next() {
+				var tableName string
+				if err := rows.Scan(&tableName); err != nil {
+					log.Debug().Err(err).Msgf("数据库 %s 扫描 Msg 表失败", filePath)
+					continue
+				}
+
+				hash := strings.TrimPrefix(tableName, "Msg_")
+				if hash == "" {
+					continue
+				}
+				talkers[hash] = struct{}{}
+				talkerDBMap[hash] = filePath
+			}
+			rows.Close()
+		}
 
 		// 保存数据库信息
 		infos = append(infos, MessageDBInfo{
@@ -172,6 +256,37 @@ func (ds *DataSource) initMessageDbs() error {
 		return nil
 	}
 	ds.messageInfos = infos
+
+	stores := make([]*msgstore.Store, 0, len(infos))
+	storeByPath := make(map[string]*msgstore.Store, len(infos))
+	for _, info := range infos {
+		filename := filepath.Base(info.FilePath)
+		id := strings.TrimSuffix(filename, filepath.Ext(filename))
+		var talkerMap map[string]struct{}
+		if set := talkerSets[info.FilePath]; len(set) > 0 {
+			talkerMap = make(map[string]struct{}, len(set))
+			for hash := range set {
+				talkerMap[hash] = struct{}{}
+			}
+		}
+		store := &msgstore.Store{
+			ID:        id,
+			FilePath:  info.FilePath,
+			FileName:  filename,
+			IndexPath: filepath.Join(ds.path, "indexes", "messages", id+".fts.db"),
+			StartTime: info.StartTime,
+			EndTime:   info.EndTime,
+			Talkers:   talkerMap,
+		}
+		stores = append(stores, store)
+		storeByPath[info.FilePath] = store
+	}
+
+	ds.messageStoreMu.Lock()
+	ds.messageStores = stores
+	ds.messageStoreByPath = storeByPath
+	ds.messageStoreMu.Unlock()
+	ds.talkerDBMap = talkerDBMap
 	return nil
 }
 

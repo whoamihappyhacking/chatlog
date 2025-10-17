@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"io/fs"
 	"math"
 	"net/http"
@@ -127,6 +128,33 @@ var previewVoiceSnippet = `
 </script>`
 
 var previewHTMLSnippet = previewHTMLSnippetBase + previewVoiceSnippet
+
+var chatlogHTMLHeadTemplate = `<html><head><meta charset="utf-8"><title>%s</title><style>
+body{font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.4;background:#f8f9fb;padding:24px;color:#2c3e50;}
+h1{margin:0 0 16px;font-size:22px;}
+h2{margin:24px 0 12px;font-size:18px;}
+p.meta{margin:4px 0;color:#5f6c7b;}
+.search-meta{background:#fff;padding:18px;border-radius:10px;box-shadow:0 1px 4px rgba(18,38,63,0.08);margin-bottom:18px;}
+details{margin:8px 0;padding:6px 10px;border:1px solid #dde1eb;border-radius:8px;background:#fff;box-shadow:0 1px 3px rgba(18,38,63,0.06);}
+summary{cursor:pointer;font-weight:600;color:#2c3e50;}
+.msg{margin:12px 0;padding:12px 14px;border-left:3px solid #3498db;background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(18,38,63,0.08);}
+.msg-row{display:flex;gap:12px;align-items:flex-start;}
+.avatar{width:36px;height:36px;border-radius:9px;object-fit:cover;background:#f2f2f2;border:1px solid #eee;flex:0 0 36px;}
+.msg-content{flex:1;min-width:0;}
+.meta{color:#5f6c7b;font-size:12px;display:flex;flex-wrap:wrap;gap:12px;margin-bottom:6px;align-items:center;}
+.meta .talker{color:#2c3e50;font-weight:600;}
+.meta .sender{color:#2c3e50;}
+.meta .time{color:#16a085;}
+.meta .score{font-family:monospace;color:#a0aec0;}
+pre{white-space:pre-wrap;word-break:break-word;margin:6px 0 0;}
+.empty{padding:28px;text-align:center;color:#768390;background:#fff;border-radius:10px;box-shadow:0 1px 4px rgba(18,38,63,0.08);}
+a.media{color:#2c3e50;text-decoration:none;border-bottom:1px dashed rgba(44,62,80,0.45);}
+a.media:hover{color:#0f4c81;}
+</style></head><body>`
+
+func writeChatlogHTMLHeader(w io.Writer, title string) {
+	fmt.Fprintf(w, chatlogHTMLHeadTemplate, template.HTMLEscapeString(title))
+}
 
 func (s *Service) initRouter() {
 	s.initBaseRouter()
@@ -925,9 +953,9 @@ func (s *Service) handleSearch(c *gin.Context) {
 	switch format {
 	case "html":
 		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
-		c.Writer.WriteString(`<html><head><meta charset="utf-8"><title>Search Result</title><style>body{font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;background:#f8f9fb;padding:24px;color:#2c3e50;}h1{margin:0 0 16px;font-size:22px;}h2{margin:24px 0 12px;font-size:18px;}p.meta{margin:4px 0;color:#5f6c7b;} .summary{background:#fff;padding:18px;border-radius:10px;box-shadow:0 1px 4px rgba(18,38,63,0.08);margin-bottom:18px;} .result-list{display:flex;flex-direction:column;gap:16px;} .hit{background:#fff;border-radius:10px;padding:16px 18px;box-shadow:0 1px 4px rgba(18,38,63,0.08);} .hit-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:13px;color:#5f6c7b;} .hit-header .talker{font-weight:600;color:#2c3e50;} .hit-header .score{font-family:monospace;color:#a0aec0;} .snippet{margin-bottom:10px;font-size:13px;color:#4a5568;padding:10px;border-left:3px solid #3498db;background:rgba(52,152,219,0.08);border-radius:6px;} .snippet code{background:rgba(27,31,35,0.05);padding:2px 4px;border-radius:4px;} .msg-content pre{white-space:pre-wrap;word-break:break-word;margin:0;font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;font-size:13px;color:#1f2933;} .meta-row{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:8px;font-size:13px;color:#5f6c7b;} .meta-row span{display:inline-flex;align-items:center;gap:4px;} .search-highlight{background:#fff3b0;color:inherit;padding:0 2px;border-radius:3px;} .empty{padding:28px;text-align:center;color:#768390;background:#fff;border-radius:10px;box-shadow:0 1px 4px rgba(18,38,63,0.08);} a.media{color:#2c3e50;text-decoration:none;border-bottom:1px dashed #2c3e50;} a.media:hover{color:#0f4c81;} </style></head><body>`)
-		c.Writer.WriteString("<div class=\"summary\">")
+		writeChatlogHTMLHeader(c.Writer, "Search Result")
 		c.Writer.WriteString("<h1>搜索结果</h1>")
+		c.Writer.WriteString("<div class=\"search-meta\">")
 		if resp.Query != "" {
 			c.Writer.WriteString("<p class=\"meta\"><strong>关键词：</strong>" + template.HTMLEscapeString(resp.Query) + "</p>")
 		}
@@ -954,7 +982,6 @@ func (s *Service) handleSearch(c *gin.Context) {
 		if len(resp.Hits) == 0 {
 			c.Writer.WriteString("<div class=\"empty\">暂无搜索结果</div>")
 		} else {
-			c.Writer.WriteString("<div class=\"result-list\">")
 			for idx, hit := range resp.Hits {
 				if hit == nil || hit.Message == nil {
 					continue
@@ -972,22 +999,19 @@ func (s *Service) handleSearch(c *gin.Context) {
 				if msg.SenderName != "" {
 					senderDisplay = fmt.Sprintf("%s(%s)", msg.SenderName, msg.Sender)
 				}
-				c.Writer.WriteString("<div class=\"hit\">")
-				c.Writer.WriteString("<div class=\"hit-header\"><span class=\"talker\">#" + fmt.Sprintf("%d", idx+1) + " · " + template.HTMLEscapeString(talkerDisplay) + "</span>")
+				avatarURL := template.HTMLEscapeString(s.composeAvatarURL(msg.Sender) + "?size=big")
+				talkerText := template.HTMLEscapeString(talkerDisplay)
+				senderText := template.HTMLEscapeString(senderDisplay)
+				timeText := template.HTMLEscapeString(msg.Time.Format("2006-01-02 15:04:05"))
+				c.Writer.WriteString("<div class=\"msg\"><div class=\"msg-row\"><img class=\"avatar\" src=\"" + avatarURL + "\" loading=\"lazy\" alt=\"avatar\" onerror=\"this.style.visibility='hidden'\"/><div class=\"msg-content\">")
+				c.Writer.WriteString("<div class=\"meta\"><span class=\"talker\">#" + fmt.Sprintf("%d", idx+1) + " · " + talkerText + "</span><span class=\"sender\">" + senderText + "</span><span class=\"time\">" + timeText + "</span>")
 				if hit.Score > 0 {
 					c.Writer.WriteString("<span class=\"score\">score: " + fmt.Sprintf("%.4f", hit.Score) + "</span>")
 				}
 				c.Writer.WriteString("</div>")
-				c.Writer.WriteString("<div class=\"meta-row\"><span>时间：" + template.HTMLEscapeString(msg.Time.Format("2006-01-02 15:04:05")) + "</span><span>发送者：" + template.HTMLEscapeString(senderDisplay) + "</span></div>")
-				if snippet := strings.TrimSpace(hit.Snippet); snippet != "" {
-					escaped := template.HTMLEscapeString(snippet)
-					escaped = strings.ReplaceAll(escaped, "\n", "<br/>")
-					c.Writer.WriteString("<div class=\"snippet\">" + escaped + "</div>")
-				}
-				c.Writer.WriteString("<div class=\"msg-content\"><pre>" + messageHTMLPlaceholder(msg) + "</pre></div>")
-				c.Writer.WriteString("</div>")
+				c.Writer.WriteString("<pre>" + messageHTMLPlaceholder(msg) + "</pre>")
+				c.Writer.WriteString("</div></div></div>")
 			}
-			c.Writer.WriteString("</div>")
 		}
 		c.Writer.WriteString(previewHTMLSnippet)
 		c.Writer.WriteString("</body></html>")
@@ -1133,7 +1157,7 @@ func (s *Service) handleChatlog(c *gin.Context) {
 		switch format {
 		case "html":
 			c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
-			c.Writer.WriteString("<html><head><meta charset=\"utf-8\"><title>Chatlog</title><style>body{font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.4;}details{margin:8px 0;padding:4px 8px;border:1px solid #ddd;border-radius:4px; background:#fafafa;}summary{cursor:pointer;font-weight:600;} .msg{margin:4px 0;padding:4px 6px;border-left:3px solid #3498db;background:#fff;} .msg-row{display:flex;gap:8px;align-items:flex-start;} .avatar{width:28px;height:28px;border-radius:6px;object-fit:cover;background:#f2f2f2;border:1px solid #eee;flex:0 0 28px} .msg-content{flex:1;min-width:0} .meta{color:#666;font-size:12px;} pre{white-space:pre-wrap;word-break:break-word;margin:2px 0;} .talker{color:#2c3e50;} .sender{color:#8e44ad;} .time{color:#16a085;} .content{margin-left:4px;} a.media{color:#2c3e50;text-decoration:none;} a.media:hover{text-decoration:underline;}</style></head><body>")
+			writeChatlogHTMLHeader(c.Writer, "Chatlog")
 			c.Writer.WriteString(fmt.Sprintf("<h2>All Messages %s ~ %s</h2>", start.Format("2006-01-02 15:04:05"), end.Format("2006-01-02 15:04:05")))
 			for _, g := range groups {
 				title := g.Talker
@@ -1153,7 +1177,8 @@ func (s *Service) handleChatlog(c *gin.Context) {
 						senderDisplay = template.HTMLEscapeString(senderDisplay)
 					}
 					aurl := template.HTMLEscapeString(s.composeAvatarURL(m.Sender) + "?size=big")
-					c.Writer.WriteString("<div class=\"msg\"><div class=\"msg-row\"><img class=\"avatar\" src=\"" + aurl + "\" loading=\"lazy\" alt=\"avatar\" onerror=\"this.style.visibility='hidden'\"/><div class=\"msg-content\"><div class=\"meta\"><span class=\"sender>" + senderDisplay + "</span><span class=\"time\">" + m.Time.Format("2006-01-02 15:04:05") + "</span></div><pre>" + messageHTMLPlaceholder(m) + "</pre></div></div></div>")
+					timeText := template.HTMLEscapeString(m.Time.Format("2006-01-02 15:04:05"))
+					c.Writer.WriteString("<div class=\"msg\"><div class=\"msg-row\"><img class=\"avatar\" src=\"" + aurl + "\" loading=\"lazy\" alt=\"avatar\" onerror=\"this.style.visibility='hidden'\"/><div class=\"msg-content\"><div class=\"meta\"><span class=\"sender\">" + senderDisplay + "</span><span class=\"time\">" + timeText + "</span></div><pre>" + messageHTMLPlaceholder(m) + "</pre></div></div></div>")
 				}
 				c.Writer.WriteString("</details>")
 			}
@@ -1213,7 +1238,7 @@ func (s *Service) handleChatlog(c *gin.Context) {
 	switch format {
 	case "html":
 		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
-		c.Writer.WriteString("<html><head><meta charset=\"utf-8\"><title>Chatlog</title><style>body{font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.4;} .msg{margin:8px 0;padding:6px 8px;border-left:3px solid #3498db;background:#fafafa;} .msg-row{display:flex;gap:8px;align-items:flex-start;} .avatar{width:28px;height:28px;border-radius:6px;object-fit:cover;background:#f2f2f2;border:1px solid #eee;flex:0 0 28px} .msg-content{flex:1;min-width:0} .meta{color:#666;font-size:12px;margin-bottom:2px;} pre{white-space:pre-wrap;word-break:break-word;margin:0;} .sender{color:#8e44ad;} .time{color:#16a085;margin-left:6px;} a.media{color:#2c3e50;text-decoration:none;} a.media:hover{text-decoration:underline;}</style></head><body>")
+		writeChatlogHTMLHeader(c.Writer, "Chatlog")
 		c.Writer.WriteString(fmt.Sprintf("<h2>Messages %s ~ %s (%s)</h2>", start.Format("2006-01-02 15:04:05"), end.Format("2006-01-02 15:04:05"), template.HTMLEscapeString(q.Talker)))
 		for _, m := range messages {
 			m.SetContent("host", c.Request.Host)
@@ -1228,7 +1253,8 @@ func (s *Service) handleChatlog(c *gin.Context) {
 			if m.SenderName != "" {
 				c.Writer.WriteString(")")
 			}
-			c.Writer.WriteString("</span><span class=\"time\">" + m.Time.Format("2006-01-02 15:04:05") + "</span></div><pre>")
+			timeText := template.HTMLEscapeString(m.Time.Format("2006-01-02 15:04:05"))
+			c.Writer.WriteString("</span><span class=\"time\">" + timeText + "</span></div><pre>")
 			c.Writer.WriteString(messageHTMLPlaceholder(m))
 			c.Writer.WriteString("</pre></div></div></div>")
 		}

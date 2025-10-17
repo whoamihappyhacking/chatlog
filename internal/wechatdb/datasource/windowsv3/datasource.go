@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/sjzar/chatlog/internal/errors"
 	"github.com/sjzar/chatlog/internal/model"
 	"github.com/sjzar/chatlog/internal/wechatdb/datasource/dbm"
+	"github.com/sjzar/chatlog/internal/wechatdb/msgstore"
 	"github.com/sjzar/chatlog/pkg/util"
 )
 
@@ -81,6 +83,9 @@ type DataSource struct {
 	// 消息数据库信息
 	messageInfos []MessageDBInfo
 
+	messageStores  []*msgstore.Store
+	messageStoreMu sync.RWMutex
+
 	talkerCacheMu     sync.RWMutex
 	talkerCache       []string
 	talkerCacheExpiry time.Time
@@ -89,9 +94,10 @@ type DataSource struct {
 // New 创建一个新的 WindowsV3DataSource
 func New(path string) (*DataSource, error) {
 	ds := &DataSource{
-		path:         path,
-		dbm:          dbm.NewDBManager(path),
-		messageInfos: make([]MessageDBInfo, 0),
+		path:          path,
+		dbm:           dbm.NewDBManager(path),
+		messageInfos:  make([]MessageDBInfo, 0),
+		messageStores: make([]*msgstore.Store, 0),
 	}
 
 	for _, g := range Groups {
@@ -142,6 +148,9 @@ func (ds *DataSource) initMessageDbs() error {
 	if err != nil {
 		if strings.Contains(err.Error(), "db file not found") {
 			ds.messageInfos = make([]MessageDBInfo, 0)
+			ds.messageStoreMu.Lock()
+			ds.messageStores = make([]*msgstore.Store, 0)
+			ds.messageStoreMu.Unlock()
 			return nil
 		}
 		return err
@@ -229,6 +238,28 @@ func (ds *DataSource) initMessageDbs() error {
 		return nil
 	}
 	ds.messageInfos = infos
+	stores := make([]*msgstore.Store, 0, len(infos))
+	for _, info := range infos {
+		filename := filepath.Base(info.FilePath)
+		id := strings.TrimSuffix(filename, filepath.Ext(filename))
+		talkers := make(map[string]struct{}, len(info.TalkerMap))
+		for t := range info.TalkerMap {
+			talkers[t] = struct{}{}
+		}
+		store := &msgstore.Store{
+			ID:        id,
+			FilePath:  info.FilePath,
+			FileName:  filename,
+			IndexPath: filepath.Join(ds.path, "indexes", "messages", id+".fts.db"),
+			StartTime: info.StartTime,
+			EndTime:   info.EndTime,
+			Talkers:   talkers,
+		}
+		stores = append(stores, store)
+	}
+	ds.messageStoreMu.Lock()
+	ds.messageStores = stores
+	ds.messageStoreMu.Unlock()
 	ds.invalidateTalkerCache()
 	return nil
 }
@@ -426,6 +457,63 @@ func (ds *DataSource) GetDatasetFingerprint(context.Context) (string, error) {
 	return ds.dbm.FingerprintForGroups(Message)
 }
 
+func (ds *DataSource) ListMessageStores(ctx context.Context) ([]*msgstore.Store, error) {
+	_ = ctx
+	ds.messageStoreMu.RLock()
+	defer ds.messageStoreMu.RUnlock()
+
+	stores := make([]*msgstore.Store, len(ds.messageStores))
+	for i, store := range ds.messageStores {
+		stores[i] = store.Clone()
+	}
+	return stores, nil
+}
+
+func (ds *DataSource) LocateMessageStore(msg *model.Message) (*msgstore.Store, error) {
+	if msg == nil {
+		return nil, errors.MessageStoreNotFound("nil message")
+	}
+
+	talker := strings.TrimSpace(msg.Talker)
+	ts := msg.Time
+
+	ds.messageStoreMu.RLock()
+	defer ds.messageStoreMu.RUnlock()
+
+	if ts.IsZero() {
+		for _, store := range ds.messageStores {
+			if len(store.Talkers) == 0 {
+				continue
+			}
+			if _, ok := store.Talkers[talker]; ok {
+				return store, nil
+			}
+		}
+		return nil, errors.MessageStoreNotFound(talker)
+	}
+
+	for _, store := range ds.messageStores {
+		if len(store.Talkers) > 0 {
+			if _, ok := store.Talkers[talker]; !ok {
+				continue
+			}
+		}
+		if (ts.Equal(store.StartTime) || ts.After(store.StartTime)) && ts.Before(store.EndTime) {
+			return store, nil
+		}
+	}
+
+	for _, store := range ds.messageStores {
+		if len(store.Talkers) > 0 {
+			if _, ok := store.Talkers[talker]; ok {
+				return store, nil
+			}
+		}
+	}
+
+	return nil, errors.MessageStoreNotFound(fmt.Sprintf("%s@%s", talker, ts.Format(time.RFC3339)))
+}
+
 func (ds *DataSource) getCachedTalkers() []string {
 	ds.talkerCacheMu.RLock()
 	if ds.talkerCacheExpiry.IsZero() || time.Now().After(ds.talkerCacheExpiry) {
@@ -538,7 +626,7 @@ func (ds *DataSource) ListTalkers(ctx context.Context) ([]string, error) {
 	return ds.collectAllTalkers(ctx)
 }
 
-// IterateMessages 按 talker 枚举消息并交给处理函数，供 Bleve 索引使用
+// IterateMessages 按 talker 枚举消息并交给处理函数，供 FTS 索引使用
 func (ds *DataSource) IterateMessages(ctx context.Context, talkers []string, handler func(*model.Message) error) error {
 	if handler == nil {
 		return errors.InvalidArg("handler")

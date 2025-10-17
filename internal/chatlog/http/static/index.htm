@@ -848,11 +848,26 @@
 						<div class="api-description">
 							<p>
 								使用
-								<strong>Bleve</strong>
+								<strong>SQLite FTS</strong>
 								在指定会话中查找消息。<span class="badge"
 									>GET /api/v1/search</span
 								>
 							</p>
+						</div>
+						<div class="form-group">
+							<label for="search-start-date"
+								>时间范围：<span class="optional-param"
+									>可选</span
+								></label
+							>
+							<div class="date-range">
+								<input type="date" id="search-start-date" />
+								<span class="date-separator">至</span>
+								<input type="date" id="search-end-date" />
+							</div>
+							<div class="form-hint">
+								留空表示不限制时间范围。
+							</div>
 						</div>
 						<div class="form-group">
 							<label for="search-query"
@@ -890,21 +905,6 @@
 								type="text"
 								placeholder="支持多个发送者，英文逗号分隔"
 							/>
-						</div>
-						<div class="form-group">
-							<label for="search-start-date"
-								>时间范围：<span class="optional-param"
-									>可选</span
-								></label
-							>
-							<div class="date-range">
-								<input type="date" id="search-start-date" />
-								<span class="date-separator">至</span>
-								<input type="date" id="search-end-date" />
-							</div>
-							<div class="form-hint">
-								留空表示不限制时间范围。
-							</div>
 						</div>
 						<div class="form-group">
 							<label for="search-limit"

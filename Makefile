@@ -8,7 +8,8 @@ ifeq ($(OS),Windows_NT)
 	CGO_EXTRA_LDFLAGS := -lgomp
 endif
 LDFLAGS := -ldflags '-X "github.com/sjzar/chatlog/pkg/version.Version=$(VERSION)" -w -s'
-CGO_FLAG := CGO_ENABLED=1 CGO_CFLAGS="-I$(abspath $(CURDIR)/include)" CGO_LDFLAGS="-L$(abspath $(CURDIR)/library) $(CGO_EXTRA_LDFLAGS)"
+CGOFLAGS := CGO_ENABLED=1 CGO_CFLAGS="-I$(abspath $(CURDIR)/include)" CGO_LDFLAGS="-L$(abspath $(CURDIR)/library) $(CGO_EXTRA_LDFLAGS)"
+TAGS := --tags "fts5"
 
 PLATFORMS := \
     darwin/amd64 \
@@ -48,16 +49,16 @@ lint:
 
 tidy:
 	@echo "Tidying up dependencies..."
-	@$(CGO_FLAG) $(GO) mod tidy
+	@$(CGOFLAGS) $(GO) mod tidy
 
 test:
 	@echo "Running tests..."
-	@$(CGO_FLAG) $(GO) test ./... -cover
+	@$(CGOFLAGS) $(GO) test ./... -cover
 
 build:
 	@echo "Building for current platform..."
 	@$(MKDIR_BIN)
-	@$(CGO_FLAG) $(GO) build -trimpath $(LDFLAGS) -o bin/$(BINARY_NAME)$(BINARY_SUFFIX) main.go
+	@$(CGOFLAGS) $(GO) build -trimpath $(LDFLAGS) $(TAGS) -o bin/$(BINARY_NAME)$(BINARY_SUFFIX) main.go
 
 crossbuild: clean
 	@echo "Building for multiple platforms..."
@@ -71,7 +72,7 @@ crossbuild: clean
 		[ "$$os" = "windows" ] && output_name=$$output_name.exe; \
 		echo "Building for $$os/$$arch..."; \
 		echo "Building for $$output_name..."; \
-		@GOOS=$$os GOARCH=$$arch GOARM=$$float $(CGO_FLAG) $(GO) build -trimpath $(LDFLAGS) -o $$output_name main.go ; \
+		@GOOS=$$os GOARCH=$$arch GOARM=$$float $(CGOFLAGS) $(GO) build -trimpath $(LDFLAGS) $(TAGS) -o $$output_name main.go ; \
 		if [ "$(ENABLE_UPX)" = "1" ] && echo "$(UPX_PLATFORMS)" | grep -q "$$os/$$arch"; then \
 			echo "Compressing binary $$output_name..." && upx --best $$output_name; \
 		fi; \

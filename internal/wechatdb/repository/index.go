@@ -2,8 +2,11 @@ package repository
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -12,10 +15,11 @@ import (
 
 	"github.com/sjzar/chatlog/internal/model"
 	"github.com/sjzar/chatlog/internal/wechatdb/indexer"
+	"github.com/sjzar/chatlog/internal/wechatdb/msgstore"
 	"github.com/sjzar/chatlog/pkg/util"
 )
 
-type bleveIndexable interface {
+type ftsIndexable interface {
 	ListTalkers(ctx context.Context) ([]string, error)
 	IterateMessages(ctx context.Context, talkers []string, fn func(*model.Message) error) error
 }
@@ -36,11 +40,11 @@ func (r *Repository) initIndex() error {
 	go func() {
 		ready, err := r.ensureIndex(r.indexCtx)
 		if err != nil && !errors.Is(err, context.Canceled) {
-			log.Warn().Err(err).Msg("ensure bleve index failed")
+			log.Warn().Err(err).Msg("ensure fts index failed")
 			return
 		}
 		if ready {
-			log.Info().Msg("bleve index ready")
+			log.Info().Msg("fts index ready")
 		}
 	}()
 
@@ -125,9 +129,14 @@ func (r *Repository) ensureIndex(ctx context.Context) (bool, error) {
 }
 
 func (r *Repository) rebuildIndex(ctx context.Context, fp string) error {
-	indexable, ok := r.ds.(bleveIndexable)
+	indexable, ok := r.ds.(ftsIndexable)
 	if !ok {
-		return fmt.Errorf("datasource does not support bleve indexing")
+		return fmt.Errorf("datasource does not support fts indexing")
+	}
+
+	stores, err := r.ds.ListMessageStores(ctx)
+	if err != nil {
+		return err
 	}
 
 	if err := r.index.Reset(); err != nil {
@@ -136,6 +145,91 @@ func (r *Repository) rebuildIndex(ctx context.Context, fp string) error {
 	if _, err := r.index.EnsureVersion(); err != nil {
 		return err
 	}
+	if err := r.index.SyncStores(stores); err != nil {
+		return err
+	}
+
+	if len(stores) == 0 {
+		if err := r.index.UpdateFingerprint(fp); err != nil {
+			return err
+		}
+		return r.index.UpdateLastBuilt(time.Now())
+	}
+
+	storeByID := make(map[string]*msgstore.Store, len(stores))
+	storeByPath := make(map[string]*msgstore.Store, len(stores))
+	talkerHashStore := make(map[string]*msgstore.Store)
+	for _, store := range stores {
+		if store == nil {
+			continue
+		}
+		storeByID[store.ID] = store
+		if store.FilePath != "" {
+			storeByPath[filepath.Clean(store.FilePath)] = store
+		}
+		for hash := range store.Talkers {
+			talkerHashStore[hash] = store
+		}
+	}
+
+	const perStoreBatchSize = 512
+	storeBuffers := make(map[string][]*model.Message, len(stores))
+	dirtyStores := make(map[string]struct{})
+
+	locateStore := func(msg *model.Message) (*msgstore.Store, error) {
+		if msg == nil {
+			return nil, errors.New("message is nil")
+		}
+		talker := strings.TrimSpace(msg.Talker)
+		if talker != "" {
+			hashBytes := md5.Sum([]byte(talker))
+			hash := hex.EncodeToString(hashBytes[:])
+			if store := talkerHashStore[hash]; store != nil {
+				return store, nil
+			}
+		}
+
+		located, err := r.ds.LocateMessageStore(msg)
+		if err != nil {
+			return nil, err
+		}
+		if located == nil {
+			return nil, fmt.Errorf("message store not found for talker %s", talker)
+		}
+		if store := storeByPath[filepath.Clean(located.FilePath)]; store != nil {
+			return store, nil
+		}
+		if store := storeByID[located.ID]; store != nil {
+			return store, nil
+		}
+		return nil, fmt.Errorf("message store %s not registered", located.FilePath)
+	}
+
+	flushStore := func(store *msgstore.Store) error {
+		if store == nil {
+			return nil
+		}
+		buf := storeBuffers[store.ID]
+		if len(buf) == 0 {
+			return nil
+		}
+		if err := r.index.IndexStoreMessages(store, buf); err != nil {
+			return err
+		}
+		storeBuffers[store.ID] = buf[:0]
+		return nil
+	}
+
+	flushDirty := func() error {
+		for id := range dirtyStores {
+			store := storeByID[id]
+			if err := flushStore(store); err != nil {
+				return err
+			}
+			delete(dirtyStores, id)
+		}
+		return nil
+	}
 
 	talkers, err := indexable.ListTalkers(ctx)
 	if err != nil {
@@ -143,6 +237,9 @@ func (r *Repository) rebuildIndex(ctx context.Context, fp string) error {
 	}
 
 	if len(talkers) == 0 {
+		if err := flushDirty(); err != nil {
+			return err
+		}
 		if err := r.index.UpdateFingerprint(fp); err != nil {
 			return err
 		}
@@ -150,18 +247,6 @@ func (r *Repository) rebuildIndex(ctx context.Context, fp string) error {
 	}
 
 	sort.Strings(talkers)
-
-	batch := make([]*model.Message, 0, 512)
-	flush := func() error {
-		if len(batch) == 0 {
-			return nil
-		}
-		if err := r.index.IndexMessages(batch); err != nil {
-			return err
-		}
-		batch = batch[:0]
-		return nil
-	}
 
 	total := float64(len(talkers))
 	for i, talker := range talkers {
@@ -173,10 +258,21 @@ func (r *Repository) rebuildIndex(ctx context.Context, fp string) error {
 			if msg == nil {
 				return nil
 			}
-			batch = append(batch, msg)
-			if len(batch) >= cap(batch) {
-				return flush()
+			store, err := locateStore(msg)
+			if err != nil {
+				log.Warn().Err(err).Str("talker", msg.Talker).Msg("skip message without store")
+				return nil
 			}
+			batch := storeBuffers[store.ID]
+			batch = append(batch, msg)
+			if len(batch) >= perStoreBatchSize {
+				if err := r.index.IndexStoreMessages(store, batch); err != nil {
+					return err
+				}
+				batch = batch[:0]
+			}
+			storeBuffers[store.ID] = batch
+			dirtyStores[store.ID] = struct{}{}
 			return nil
 		}
 
@@ -184,11 +280,15 @@ func (r *Repository) rebuildIndex(ctx context.Context, fp string) error {
 			return err
 		}
 
-		if err := flush(); err != nil {
+		if err := flushDirty(); err != nil {
 			return err
 		}
 
 		r.updateIndexProgress(float64(i+1) / total)
+	}
+
+	if err := flushDirty(); err != nil {
+		return err
 	}
 
 	if err := r.index.UpdateFingerprint(fp); err != nil {

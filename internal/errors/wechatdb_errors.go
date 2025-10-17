@@ -30,6 +30,10 @@ func TalkerNotFound(talker string) *Error {
 	return Newf(nil, http.StatusNotFound, "talker not found: %s", talker).WithStack()
 }
 
+func MessageStoreNotFound(key string) *Error {
+	return Newf(nil, http.StatusNotFound, "message store not found: %s", key).WithStack()
+}
+
 func DBCloseFailed(cause error) *Error {
 	return New(cause, http.StatusInternalServerError, "db close failed").WithStack()
 }

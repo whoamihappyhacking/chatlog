@@ -6,9 +6,11 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -18,6 +20,7 @@ import (
 	"github.com/sjzar/chatlog/internal/errors"
 	"github.com/sjzar/chatlog/internal/model"
 	"github.com/sjzar/chatlog/internal/wechatdb/datasource/dbm"
+	"github.com/sjzar/chatlog/internal/wechatdb/msgstore"
 	"github.com/sjzar/chatlog/pkg/util"
 )
 
@@ -63,14 +66,20 @@ type DataSource struct {
 
 	talkerDBMap      map[string]string
 	user2DisplayName map[string]string
+
+	messageStores      []*msgstore.Store
+	messageStoreByPath map[string]*msgstore.Store
+	messageStoreMu     sync.RWMutex
 }
 
 func New(path string) (*DataSource, error) {
 	ds := &DataSource{
-		path:             path,
-		dbm:              dbm.NewDBManager(path),
-		talkerDBMap:      make(map[string]string),
-		user2DisplayName: make(map[string]string),
+		path:               path,
+		dbm:                dbm.NewDBManager(path),
+		talkerDBMap:        make(map[string]string),
+		user2DisplayName:   make(map[string]string),
+		messageStores:      make([]*msgstore.Store, 0),
+		messageStoreByPath: make(map[string]*msgstore.Store),
 	}
 
 	for _, g := range Groups {
@@ -114,6 +123,56 @@ func (ds *DataSource) SetCallback(group string, callback func(event fsnotify.Eve
 	return ds.dbm.AddCallback(group, callback)
 }
 
+func (ds *DataSource) ListMessageStores(ctx context.Context) ([]*msgstore.Store, error) {
+	_ = ctx
+
+	ds.messageStoreMu.RLock()
+	defer ds.messageStoreMu.RUnlock()
+
+	stores := make([]*msgstore.Store, len(ds.messageStores))
+	for i, store := range ds.messageStores {
+		stores[i] = store.Clone()
+	}
+	return stores, nil
+}
+
+func (ds *DataSource) LocateMessageStore(msg *model.Message) (*msgstore.Store, error) {
+	if msg == nil {
+		return nil, errors.MessageStoreNotFound("nil message")
+	}
+
+	talker := strings.TrimSpace(msg.Talker)
+	ds.messageStoreMu.RLock()
+	defer ds.messageStoreMu.RUnlock()
+
+	if talker != "" {
+		hash := md5.Sum([]byte(talker))
+		key := hex.EncodeToString(hash[:])
+		if path, ok := ds.talkerDBMap[key]; ok {
+			if store, exists := ds.messageStoreByPath[path]; exists {
+				return store, nil
+			}
+		}
+	}
+
+	ts := msg.Time
+	if !ts.IsZero() {
+		for _, store := range ds.messageStores {
+			if store.StartTime.IsZero() || store.EndTime.IsZero() {
+				continue
+			}
+			if (ts.Equal(store.StartTime) || ts.After(store.StartTime)) && ts.Before(store.EndTime) {
+				return store, nil
+			}
+		}
+	}
+
+	if talker == "" {
+		talker = "unknown"
+	}
+	return nil, errors.MessageStoreNotFound(talker)
+}
+
 func (ds *DataSource) initMessageDbs() error {
 
 	dbPaths, err := ds.dbm.GetDBPath(Message)
@@ -126,6 +185,8 @@ func (ds *DataSource) initMessageDbs() error {
 	}
 	// 处理每个数据库文件
 	talkerDBMap := make(map[string]string)
+	storeByPath := make(map[string]*msgstore.Store)
+	stores := make([]*msgstore.Store, 0, len(dbPaths))
 	for _, filePath := range dbPaths {
 		db, err := ds.dbm.OpenDB(filePath)
 		if err != nil {
@@ -133,30 +194,83 @@ func (ds *DataSource) initMessageDbs() error {
 			continue
 		}
 
+		baseName := filepath.Base(filePath)
+		id := strings.TrimSuffix(baseName, filepath.Ext(baseName))
+		store := &msgstore.Store{
+			ID:        id,
+			FilePath:  filePath,
+			FileName:  baseName,
+			IndexPath: filepath.Join(ds.path, "indexes", "messages", id+".fts.db"),
+			Talkers:   make(map[string]struct{}),
+		}
+
+		var minTS int64
+		var maxTS int64
+		haveMin := false
+		haveMax := false
+
 		// 获取所有表名
 		rows, err := db.Query("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Chat_%'")
 		if err != nil {
 			log.Err(err).Msgf("数据库 %s 中没有 Chat 表", filePath)
-			continue
+		} else {
+			for rows.Next() {
+				var tableName string
+				if err := rows.Scan(&tableName); err != nil {
+					log.Err(err).Msgf("数据库 %s 扫描表名失败", filePath)
+					continue
+				}
+
+				// 从表名中提取可能的talker信息
+				talkerMd5 := extractTalkerFromTableName(tableName)
+				if talkerMd5 == "" {
+					continue
+				}
+				talkerDBMap[talkerMd5] = filePath
+				store.Talkers[talkerMd5] = struct{}{}
+
+				row := db.QueryRow(fmt.Sprintf("SELECT MIN(MsgCreateTime), MAX(MsgCreateTime) FROM %s", tableName))
+				var tableMin, tableMax sql.NullInt64
+				if err := row.Scan(&tableMin, &tableMax); err != nil {
+					log.Debug().Err(err).Msgf("查询 %s 时间范围失败", tableName)
+					continue
+				}
+
+				if tableMin.Valid {
+					if !haveMin || tableMin.Int64 < minTS {
+						minTS = tableMin.Int64
+					}
+					haveMin = true
+				}
+				if tableMax.Valid {
+					if !haveMax || tableMax.Int64 > maxTS {
+						maxTS = tableMax.Int64
+					}
+					haveMax = true
+				}
+			}
+			rows.Close()
 		}
 
-		for rows.Next() {
-			var tableName string
-			if err := rows.Scan(&tableName); err != nil {
-				log.Err(err).Msgf("数据库 %s 扫描表名失败", filePath)
-				continue
-			}
-
-			// 从表名中提取可能的talker信息
-			talkerMd5 := extractTalkerFromTableName(tableName)
-			if talkerMd5 == "" {
-				continue
-			}
-			talkerDBMap[talkerMd5] = filePath
+		if len(store.Talkers) == 0 {
+			store.Talkers = nil
 		}
-		rows.Close()
+		if haveMin {
+			store.StartTime = time.Unix(minTS, 0)
+		}
+		if haveMax {
+			store.EndTime = time.Unix(maxTS, 0).Add(time.Second)
+		}
+
+		stores = append(stores, store)
+		storeByPath[filePath] = store
 	}
+
 	ds.talkerDBMap = talkerDBMap
+	ds.messageStoreMu.Lock()
+	ds.messageStores = stores
+	ds.messageStoreByPath = storeByPath
+	ds.messageStoreMu.Unlock()
 	return nil
 }
 

@@ -52,7 +52,7 @@ type SearchResponse struct {
 	Index      *SearchIndexStatus `json:"index_status,omitempty"`
 }
 
-// SearchIndexStatus 表示 Bleve 索引的构建状态
+// SearchIndexStatus 表示全文索引的构建状态
 type SearchIndexStatus struct {
 	Ready           bool      `json:"ready"`
 	InProgress      bool      `json:"in_progress"`

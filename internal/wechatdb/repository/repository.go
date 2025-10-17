@@ -22,7 +22,6 @@ type Repository struct {
 	indexMu          sync.Mutex
 	indexStatus      model.SearchIndexStatus
 	indexFingerprint string
-	indexBuildMu     sync.Mutex
 	indexCtx         context.Context
 	indexCancel      context.CancelFunc
 
@@ -80,7 +79,7 @@ func New(ds datasource.DataSource, indexPath string) (*Repository, error) {
 	ds.SetCallback("chatroom", r.chatroomCallback)
 
 	if err := r.initIndex(); err != nil {
-		log.Warn().Err(err).Msg("init bleve index failed")
+		log.Warn().Err(err).Msg("init fts index failed")
 	}
 
 	return r, nil

@@ -2,6 +2,8 @@ package wechatdb
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -52,6 +54,9 @@ func (w *DB) Initialize() error {
 	}
 
 	indexPath := filepath.Join(w.path, "indexes", "messages")
+	if err := os.MkdirAll(indexPath, 0o755); err != nil {
+		return fmt.Errorf("prepare index directory: %w", err)
+	}
 	w.repo, err = repository.New(w.ds, indexPath)
 	if err != nil {
 		return err

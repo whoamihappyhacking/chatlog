@@ -11,9 +11,11 @@ import (
 	"github.com/sjzar/chatlog/internal/wechatdb/datasource/darwinv3"
 	v4 "github.com/sjzar/chatlog/internal/wechatdb/datasource/v4"
 	"github.com/sjzar/chatlog/internal/wechatdb/datasource/windowsv3"
+	"github.com/sjzar/chatlog/internal/wechatdb/msgstore"
 )
 
 type DataSource interface {
+	msgstore.Provider
 
 	// 消息
 	GetMessages(ctx context.Context, startTime, endTime time.Time, talker string, sender string, keyword string, limit, offset int) ([]*model.Message, error)
