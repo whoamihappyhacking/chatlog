@@ -82,6 +82,13 @@ func (w *DB) SearchMessages(req *model.SearchRequest) (*model.SearchResponse, er
 	return w.repo.SearchMessages(ctx, req)
 }
 
+func (w *DB) IndexMessages(messages []*model.Message) error {
+	if w.repo == nil {
+		return fmt.Errorf("repository not initialized")
+	}
+	return w.repo.IndexMessages(context.Background(), messages)
+}
+
 type GetContactsResp struct {
 	Items []*model.Contact `json:"items"`
 }

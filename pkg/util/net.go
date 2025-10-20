@@ -105,4 +105,3 @@ func ComposeLANURL(addr string) string {
 	}
 	return "http://" + h + ":" + port
 }
-

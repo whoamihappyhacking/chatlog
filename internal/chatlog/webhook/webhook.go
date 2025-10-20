@@ -166,6 +166,10 @@ func (m *MessageWebhook) Do(event fsnotify.Event) {
 		return
 	}
 
+	if err := m.db.IndexMessages(messages); err != nil {
+		log.Warn().Err(err).Msg("incremental fts update failed")
+	}
+
 	m.lastTime = messages[len(messages)-1].Time.Add(time.Second)
 
 	for _, message := range messages {

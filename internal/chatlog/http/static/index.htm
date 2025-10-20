@@ -272,6 +272,18 @@
 				animation: dots 1.5s steps(5, end) infinite;
 			}
 
+			.search-index-status {
+				display: none;
+				margin-bottom: 16px;
+				padding: 12px 14px;
+				border-radius: 6px;
+				border: 1px solid #ffe1a3;
+				background-color: #fff8e5;
+				color: #8a6d3b;
+				font-size: 14px;
+				line-height: 1.5;
+			}
+
 			@keyframes dots {
 				0%,
 				20% {
@@ -853,6 +865,14 @@
 									>GET /api/v1/search</span
 								>
 							</p>
+						</div>
+						<div
+							id="search-index-status"
+							class="search-index-status"
+							role="status"
+							aria-live="polite"
+						>
+							正在检查全文索引状态...
 						</div>
 						<div class="form-group">
 							<label for="search-start-date"
@@ -1681,6 +1701,103 @@
 				document.getElementById("error-message");
 			const copyResultButton = document.getElementById("copy-result");
 			const copyUrlButton = document.getElementById("copy-url");
+			const searchIndexStatusBanner = document.getElementById(
+				"search-index-status"
+			);
+			let searchIndexReady = false;
+			let searchIndexStatusTimer = null;
+			if (searchIndexStatusBanner) {
+				searchIndexStatusBanner.dataset.statusText =
+					searchIndexStatusBanner.textContent.trim();
+			}
+
+			function updateSearchIndexBanner(status, options) {
+				if (!searchIndexStatusBanner) {
+					searchIndexReady = Boolean(status && status.ready);
+					return;
+				}
+				if (options && options.error) {
+					searchIndexReady = false;
+					searchIndexStatusBanner.style.display = "block";
+					searchIndexStatusBanner.textContent = options.error;
+					searchIndexStatusBanner.dataset.statusText = options.error;
+					return;
+				}
+				if (status && status.ready) {
+					searchIndexReady = true;
+					searchIndexStatusBanner.style.display = "none";
+					searchIndexStatusBanner.textContent = "";
+					searchIndexStatusBanner.dataset.statusText = "";
+					if (errorMessageElement) {
+						errorMessageElement.style.display = "none";
+						errorMessageElement.textContent = "";
+					}
+					return;
+				}
+				searchIndexReady = false;
+				let message = "全文索引正在初始化，请稍候...";
+				if (status) {
+					const rawProgress =
+						typeof status.progress === "number"
+							? Math.round(status.progress * 100)
+							: null;
+					if (status.in_progress) {
+						message = `全文索引正在构建中，请稍候...`;
+					} else {
+						message = `全文索引尚未就绪，请稍候...`;
+					}
+					if (status.last_error) {
+						message += ` 上次错误：${status.last_error}`;
+					}
+				}
+				searchIndexStatusBanner.style.display = "block";
+				searchIndexStatusBanner.textContent = message;
+				searchIndexStatusBanner.dataset.statusText = message;
+			}
+
+			function scheduleSearchIndexStatusRefresh(delay) {
+				if (searchIndexStatusTimer) {
+					clearTimeout(searchIndexStatusTimer);
+				}
+				const wait =
+					typeof delay === "number" && delay > 0 ? delay : 5000;
+				searchIndexStatusTimer = setTimeout(() => {
+					refreshSearchIndexStatus();
+				}, wait);
+			}
+
+			async function refreshSearchIndexStatus() {
+				if (!searchIndexStatusBanner) {
+					searchIndexReady = true;
+					return;
+				}
+				try {
+					const resp = await fetch(
+						"/api/v1/search?limit=1&offset=0",
+						{ headers: { Accept: "application/json" } }
+					);
+					if (!resp.ok) {
+						throw new Error(`HTTP ${resp.status}`);
+					}
+					const data = await resp.json();
+					const status =
+						data && data.index_status ? data.index_status : null;
+					updateSearchIndexBanner(status);
+					if (!searchIndexReady) {
+						scheduleSearchIndexStatusRefresh(
+							status && status.in_progress ? 4000 : 8000
+						);
+					}
+				} catch (err) {
+					console.error("search index status check failed", err);
+					updateSearchIndexBanner(null, {
+						error: "无法获取全文索引状态，将稍后重试。",
+					});
+					scheduleSearchIndexStatusRefresh(10000);
+				}
+			}
+
+			refreshSearchIndexStatus();
 
 			// 标签切换功能
 			document.querySelectorAll(".tab").forEach((tab) => {
