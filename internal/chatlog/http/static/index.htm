@@ -415,7 +415,6 @@
 
 			.settings-grid {
 				display: grid;
-				grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
 				gap: 20px;
 			}
 
@@ -1079,68 +1078,6 @@
 								</button>
 							</div>
 						</div>
-
-						<div class="settings-card">
-							<h3>语音配置</h3>
-							<p>
-								直接编辑 Whisper 配置，保存后会写入
-								<code>whisper.json</code>
-							</p>
-							<textarea
-								id="settings-speech-json"
-								spellcheck="false"
-							></textarea>
-							<div class="form-hint">
-								保存前请确认 JSON
-								格式正确，可仅保留需要修改的字段。
-							</div>
-							<div class="settings-buttons">
-								<button id="settings-save-speech">
-									保存语音配置
-								</button>
-							</div>
-						</div>
-
-						<div class="settings-card settings-card--wide">
-							<h3>运行控制</h3>
-							<div class="status-row">
-								<span>HTTP 服务状态</span>
-								<span
-									id="settings-status-http"
-									class="status-badge"
-									>未知</span
-								>
-							</div>
-							<div class="status-row">
-								<span>自动解密</span>
-								<span
-									id="settings-status-auto"
-									class="status-badge"
-									>未知</span
-								>
-							</div>
-							<div class="settings-actions">
-								<button id="settings-action-get-key">
-									重新抓取密钥
-								</button>
-								<button
-									id="settings-action-decrypt"
-									class="secondary-button"
-								>
-									手动解密
-								</button>
-							</div>
-							<div class="settings-actions">
-								<button id="settings-action-start-auto">
-									开启自动解密
-								</button>
-								<button
-									id="settings-action-stop-auto"
-									class="secondary-button"
-								>
-									停止自动解密
-								</button>
-							</div>
 						</div>
 					</div>
 				</div>

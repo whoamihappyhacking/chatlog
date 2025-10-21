@@ -1,7 +1,6 @@
 package http
 
 import (
-	"context"
 	"embed"
 	"encoding/csv"
 	"encoding/json"
@@ -19,7 +18,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/rs/zerolog/log"
 
 	"github.com/sjzar/chatlog/internal/errors"
 	"github.com/sjzar/chatlog/internal/model"
@@ -181,10 +179,6 @@ func (s *Service) initBaseRouter() {
 }
 
 func (s *Service) initMediaRouter() {
-	s.router.GET("/image/*key", func(c *gin.Context) { s.handleMedia(c, "image") })
-	s.router.GET("/video/*key", func(c *gin.Context) { s.handleMedia(c, "video") })
-	s.router.GET("/file/*key", func(c *gin.Context) { s.handleMedia(c, "file") })
-	s.router.GET("/voice/*key", func(c *gin.Context) { s.handleMedia(c, "voice") })
 	s.router.GET("/data/*path", s.handleMediaData)
 	s.router.GET("/avatar/:username", s.handleAvatar)
 }
@@ -1672,118 +1666,6 @@ func (s *Service) handleDiary(c *gin.Context) {
 	}
 }
 
-func (s *Service) handleMedia(c *gin.Context, _type string) {
-	key := strings.TrimPrefix(c.Param("key"), "/")
-	if key == "" {
-		errors.Err(c, errors.InvalidArg(key))
-		return
-	}
-
-	keys := util.Str2List(key, ",")
-	if len(keys) == 0 {
-		errors.Err(c, errors.InvalidArg(key))
-		return
-	}
-
-	var _err error
-	for _, k := range keys {
-		if strings.Contains(k, "/") {
-			if absolutePath, err := s.findPath(_type, k); err == nil {
-				c.Redirect(http.StatusFound, "/data/"+absolutePath)
-				return
-			}
-		}
-		media, err := s.db.GetMedia(_type, k)
-		if err != nil {
-			_err = err
-			continue
-		}
-		if c.Query("info") != "" {
-			c.JSON(http.StatusOK, media)
-			return
-		}
-		if media.Type == "voice" && c.Query("transcribe") != "" {
-			s.handleVoiceTranscription(c, k, media)
-			return
-		}
-		switch media.Type {
-		case "voice":
-			s.HandleVoice(c, media.Data)
-			return
-		default:
-			c.Redirect(http.StatusFound, "/data/"+media.Path)
-			return
-		}
-	}
-
-	if _err != nil {
-		errors.Err(c, _err)
-		return
-	}
-}
-
-func (s *Service) handleVoiceTranscription(c *gin.Context, key string, media *model.Media) {
-	if s.speechTranscriber == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "speech transcription not enabled"})
-		return
-	}
-
-	if len(media.Data) == 0 {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "voice data unavailable"})
-		return
-	}
-
-	ctx := c.Request.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	var cancel context.CancelFunc
-	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
-		ctx, cancel = context.WithTimeout(ctx, 2*time.Minute)
-	}
-	if cancel != nil {
-		defer cancel()
-	}
-
-	opts := s.speechOptions
-	if lang := strings.TrimSpace(c.Query("lang")); lang != "" {
-		opts.Language = lang
-		opts.LanguageSet = true
-	}
-	if translate := strings.TrimSpace(c.Query("translate")); translate != "" {
-		switch strings.ToLower(translate) {
-		case "1", "true", "yes", "on":
-			opts.Translate = true
-			opts.TranslateSet = true
-		case "0", "false", "no", "off":
-			opts.Translate = false
-			opts.TranslateSet = true
-		}
-	}
-
-	res, err := s.speechTranscriber.TranscribeSilk(ctx, media.Data, opts)
-	if err != nil {
-		if ctx.Err() != nil {
-			c.JSON(http.StatusRequestTimeout, gin.H{"error": "transcription cancelled"})
-			return
-		}
-		log.Error().Err(err).Str("media_key", key).Msg("voice transcription failed")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "transcription failed"})
-		return
-	}
-	if res == nil {
-		c.JSON(http.StatusOK, gin.H{"key": key, "text": "", "language": opts.Language, "duration": 0})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"key":      key,
-		"text":     res.Text,
-		"language": res.Language,
-		"duration": res.Duration.Seconds(),
-		"segments": res.Segments,
-	})
-}
 
 func (s *Service) findPath(_type string, key string) (string, error) {
 	absolutePath := filepath.Join(s.conf.GetDataDir(), key)

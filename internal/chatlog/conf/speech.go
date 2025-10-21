@@ -3,7 +3,6 @@ package conf
 import (
 	"strings"
 
-	"github.com/sjzar/chatlog/internal/whisper"
 )
 
 // OpenAISettings captures provider-specific fields retained for backwards compatibility.
@@ -115,38 +114,3 @@ func (c *SpeechConfig) PrepareForSave() {
 	c.OpenAI.Proxy = c.Proxy
 }
 
-// ToOptions converts the speech config into runtime options for a transcription backend.
-func (c *SpeechConfig) ToOptions() whisper.Options {
-	var opts whisper.Options
-
-	if c == nil {
-		return opts
-	}
-
-	if c.Language != "" {
-		opts.Language = c.Language
-		opts.LanguageSet = true
-	}
-	if c.Translate != nil {
-		opts.Translate = *c.Translate
-		opts.TranslateSet = true
-	}
-	if c.Threads > 0 {
-		opts.Threads = c.Threads
-		opts.ThreadsSet = true
-	}
-	if c.InitialPrompt != "" {
-		opts.InitialPrompt = c.InitialPrompt
-		opts.InitialPromptSet = true
-	}
-	if c.Temperature != nil {
-		opts.Temperature = float32(*c.Temperature)
-		opts.TemperatureSet = true
-	}
-	if c.TemperatureFallback != nil {
-		opts.TemperatureFloor = float32(*c.TemperatureFallback)
-		opts.TemperatureFloorSet = true
-	}
-
-	return opts
-}

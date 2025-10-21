@@ -13,7 +13,6 @@ import (
 	"github.com/sjzar/chatlog/internal/chatlog/conf"
 	"github.com/sjzar/chatlog/internal/chatlog/database"
 	"github.com/sjzar/chatlog/internal/errors"
-	"github.com/sjzar/chatlog/internal/whisper"
 )
 
 type Service struct {
@@ -28,8 +27,6 @@ type Service struct {
 	mcpSSEServer        *server.SSEServer
 	mcpStreamableServer *server.StreamableHTTPServer
 
-	speechTranscriber whisper.Transcriber
-	speechOptions     whisper.Options
 }
 
 type Config interface {
@@ -90,10 +87,6 @@ func NewService(conf Config, db *database.Service, control Control) *Service {
 }
 
 func (s *Service) initSpeech(cfg Config) {
-	if s.speechTranscriber != nil {
-		s.speechTranscriber.Close()
-		s.speechTranscriber = nil
-	}
 
 	speechCfg := cfg.GetSpeech()
 	if speechCfg == nil || !speechCfg.Enabled {
@@ -102,59 +95,8 @@ func (s *Service) initSpeech(cfg Config) {
 
 	speechCfg.Normalize()
 
-	opts := speechCfg.ToOptions()
-	timeout := time.Duration(speechCfg.RequestTimeoutSeconds) * time.Second
-
 	provider := strings.ToLower(speechCfg.Provider)
 	switch provider {
-	case "openai":
-		transcriber, err := whisper.NewOpenAITranscriber(whisper.OpenAIConfig{
-			Model:          speechCfg.Model,
-			TranslateModel: speechCfg.TranslateModel,
-			APIKey:         speechCfg.APIKey,
-			BaseURL:        speechCfg.BaseURL,
-			Organization:   speechCfg.Organization,
-			ProxyURL:       speechCfg.Proxy,
-			RequestTimeout: timeout,
-			DefaultOptions: opts,
-		})
-		if err != nil {
-			log.Err(err).Msg("initialise openai whisper transcriber failed")
-			return
-		}
-		s.speechTranscriber = transcriber
-		s.speechOptions = opts
-		log.Info().Str("model", transcriber.ModelName()).Msg("speech transcription backend initialised via openai whisper")
-	case "webservice", "local", "docker", "http", "whisper-asr":
-		transcriber, err := whisper.NewWebServiceTranscriber(whisper.WebServiceConfig{
-			BaseURL:        speechCfg.ServiceURL,
-			OutputFormat:   speechCfg.ServiceOutput,
-			WordTimestamps: speechCfg.WordTimestamps,
-			VADFilter:      speechCfg.VADFilter,
-			RequestTimeout: timeout,
-			DefaultOptions: opts,
-		})
-		if err != nil {
-			log.Err(err).Msg("initialise webservice whisper transcriber failed")
-			return
-		}
-		s.speechTranscriber = transcriber
-		s.speechOptions = opts
-		log.Info().Str("base_url", speechCfg.ServiceURL).Msg("speech transcription backend initialised via whisper webservice")
-	case "whispercpp", "whisper.cpp", "cpp":
-		modelPath := strings.TrimSpace(speechCfg.Model)
-		transcriber, err := whisper.NewWhisperCPPTranscriber(whisper.WhisperCPPConfig{
-			ModelPath:      modelPath,
-			Threads:        speechCfg.Threads,
-			DefaultOptions: opts,
-		})
-		if err != nil {
-			log.Err(err).Msg("initialise whisper.cpp transcriber failed")
-			return
-		}
-		s.speechTranscriber = transcriber
-		s.speechOptions = opts
-		log.Info().Str("model_path", modelPath).Msg("speech transcription backend initialised via whisper.cpp")
 	default:
 		log.Warn().Str("provider", speechCfg.Provider).Msg("unsupported speech provider; speech transcription disabled")
 	}
@@ -207,11 +149,6 @@ func (s *Service) Stop() error {
 	if err := s.server.Shutdown(ctx); err != nil {
 		log.Debug().Err(err).Msg("Failed to shutdown HTTP server")
 		return nil
-	}
-
-	if s.speechTranscriber != nil {
-		s.speechTranscriber.Close()
-		s.speechTranscriber = nil
 	}
 
 	log.Info().Msg("HTTP server stopped")
