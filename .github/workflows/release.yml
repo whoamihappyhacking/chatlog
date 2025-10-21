@@ -1,56 +1,36 @@
-name: Release
+name: Build Docker Image and Upload to Release
 
 on:
   workflow_dispatch:
 
-env:
-  IMAGE_NAME: ${{ github.repository }}
-
 jobs:
-  release:
-    name: Release Binary and Docker
+  build:
     runs-on: ubuntu-latest
-    container:
-      image: goreleaser/goreleaser-cross:v1.24
     permissions:
-      contents: write
-      packages: write
-      id-token: write
+      contents: write  # 用于创建或上传 release 资源
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      
-      - name: Fix git permissions
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
-      - name: Install UPX
-        uses: crazy-max/ghaction-upx@v3
-        with:
-          install-only: true
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build Docker image (no push)
+        run: |
+          docker build -t chatlog:latest .
 
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Save Docker image to tar
+        run: |
+          docker save chatlog:latest -o chatlog.tar
 
-      - name: Run GoReleaser
-        run: goreleaser release --clean
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: manual-build-${{ github.run_number }}
+          name: Manual Build ${{ github.run_number }}
+          draft: false
+          prerelease: false
+          files: chatlog.tar
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
