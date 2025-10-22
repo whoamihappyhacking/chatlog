@@ -23,7 +23,6 @@ import (
 	"github.com/sjzar/chatlog/internal/model"
 	"github.com/sjzar/chatlog/pkg/util"
 	"github.com/sjzar/chatlog/pkg/util/dat2img"
-	"github.com/sjzar/chatlog/pkg/util/silk"
 )
 
 //go:embed static
@@ -1666,7 +1665,6 @@ func (s *Service) handleDiary(c *gin.Context) {
 	}
 }
 
-
 func (s *Service) findPath(_type string, key string) (string, error) {
 	absolutePath := filepath.Join(s.conf.GetDataDir(), key)
 	if _, err := os.Stat(absolutePath); err == nil {
@@ -1740,15 +1738,6 @@ func (s *Service) HandleDatFile(c *gin.Context, path string) {
 		c.Data(http.StatusOK, "image/jpg", out)
 		// c.File(path)
 	}
-}
-
-func (s *Service) HandleVoice(c *gin.Context, data []byte) {
-	out, err := silk.Silk2MP3(data)
-	if err != nil {
-		c.Data(http.StatusOK, "audio/silk", data)
-		return
-	}
-	c.Data(http.StatusOK, "audio/mp3", out)
 }
 
 // 统一占位符：将 PlainTextContent 里形如 ![标签](url) 或 [标签](url) 的模式转成超链接形式，仅显示 [标签]。

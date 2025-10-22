@@ -1,0 +1,10 @@
+params:
+  - id: data_key
+    type: string
+    name: "微信数据密钥"
+    description: "微信数据密钥(请根据此连接教程获取对应的密钥)"
+
+  - id: data_dir
+    type: string
+    name: "微信数据目录"
+    description: "在网盘应用数据里查看，即时通讯多合一->wechat->wxid开头的（完整复制进来）"

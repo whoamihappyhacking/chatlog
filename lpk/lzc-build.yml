@@ -1,0 +1,14 @@
+manifest: ./lzc-manifest.yml
+
+pkgout: ./
+
+icon: ./lzc-icon.png
+
+contentdir: ./bin
+
+compose_override:
+  services:
+    app:
+      volumes:
+        - /lzcsys/run/data/appvar/iamxiaoe.lzcapp.imallinone/imallinone/wechat:/datadir
+
